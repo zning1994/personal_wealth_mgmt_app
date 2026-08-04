@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { parseCommandInput, parseCommandOutput, parseTaskProgress } from "./ipc";
+import {
+  parseCommandInput,
+  parseCommandOutput,
+  parseTaskProgress,
+  type DesktopCommand,
+} from "./ipc";
+
+function expectUnknownDesktopCommandError(parse: () => unknown): void {
+  try {
+    parse();
+  } catch (error: unknown) {
+    expect(error).toMatchObject({
+      name: "UnknownDesktopCommandError",
+      code: "UNKNOWN_DESKTOP_COMMAND",
+      message: "Unknown desktop command: task:unknown",
+    });
+    return;
+  }
+
+  throw new Error("Expected an unknown desktop command error");
+}
 
 describe("IPC schemas", () => {
   it("validates both sides of an allowlisted task command", () => {
@@ -23,5 +43,23 @@ describe("IPC schemas", () => {
         payload: { echo: "ok", unexpected: true },
       }),
     ).toThrow();
+  });
+
+  it("rejects unknown fields in app info outputs", () => {
+    expect(() =>
+      parseCommandOutput("app:get-info", {
+        name: "Personal Wealth",
+        version: "0.1.0",
+        platform: "darwin",
+        unexpected: true,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects unknown runtime channels with a stable domain error", () => {
+    const channel = "task:unknown" as DesktopCommand;
+
+    expectUnknownDesktopCommandError(() => parseCommandInput(channel, {}));
+    expectUnknownDesktopCommandError(() => parseCommandOutput(channel, {}));
   });
 });
