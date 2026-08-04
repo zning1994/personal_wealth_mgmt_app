@@ -1,0 +1,26 @@
+{
+  "name": "@pwm/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src scripts vitest.config.ts",
+    "spike:sqlcipher": "tsx scripts/run-sqlcipher-spike.ts",
+    "assert:spike": "tsx scripts/assert-spike-report.ts"
+  },
+  "dependencies": {
+    "@journeyapps/sqlcipher": "6.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "^22.15.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "tsx": "4.20.3",
+    "typescript": "^5.9.2",
+    "vitest": "2.1.9"
+  }
+}

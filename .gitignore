@@ -16,6 +16,7 @@ coverage/
 .vite/
 test-results/
 playwright-report/
+artifacts/
 *.tsbuildinfo
 
 # Machine-local artifacts.
