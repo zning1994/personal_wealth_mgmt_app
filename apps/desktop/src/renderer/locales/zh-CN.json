@@ -1,0 +1,21 @@
+{
+  "app.title": "个人财富",
+  "app.eyebrow": "私人账本",
+  "app.thesis": "你的私人账本，已准备好迎接第一份账单。",
+  "app.intro": "一个安静的本地空间，用来理解你的资产、负债、收入与支出。",
+  "privacy.localFirst": "本地数据默认保持在此设备上",
+  "status.aria": "本机状态",
+  "status.label": "这台设备",
+  "status.checking": "正在确认本机应用",
+  "status.ready": "本机应用已安全启动",
+  "status.error": "无法确认应用状态",
+  "status.errorHint": "请重新启动应用后再试。你的本地数据没有被发送。",
+  "status.version": "应用版本",
+  "status.platform": "桌面系统",
+  "platform.darwin": "macOS",
+  "platform.win32": "Windows",
+  "prepare.label": "接下来",
+  "prepare.title": "下一步，把账单带到这里",
+  "prepare.body": "账单导入功能正在准备中。此页面不会选择或发送任何文件。",
+  "footer.localSpace": "此设备上的独立本地财务空间"
+}

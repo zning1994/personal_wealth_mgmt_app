@@ -1,0 +1,21 @@
+{
+  "app.title": "Personal Wealth",
+  "app.eyebrow": "Private ledger",
+  "app.thesis": "Your private ledger is ready for its first statement.",
+  "app.intro": "A calm, local space for understanding what you own, owe, earn, and spend.",
+  "privacy.localFirst": "Your data stays on this device by default",
+  "status.aria": "Local device status",
+  "status.label": "This device",
+  "status.checking": "Confirming the local app",
+  "status.ready": "The local app started safely",
+  "status.error": "The app status could not be confirmed",
+  "status.errorHint": "Restart the app and try again. Your local data was not sent.",
+  "status.version": "App version",
+  "status.platform": "Desktop system",
+  "platform.darwin": "macOS",
+  "platform.win32": "Windows",
+  "prepare.label": "Next on this desk",
+  "prepare.title": "Bring your statements here next",
+  "prepare.body": "Statement import is being prepared. No file is selected or sent from this screen.",
+  "footer.localSpace": "One private financial space on this device"
+}

@@ -1,0 +1,355 @@
+:root {
+  color: #17262b;
+  background: #f6f8f6;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0 31px,
+      rgba(22, 124, 120, 0.08) 31px 32px,
+      transparent 32px
+    ),
+    #f6f8f6;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid #c58a35;
+  outline-offset: 4px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: 0 clamp(1.25rem, 5vw, 5rem);
+}
+
+.topline,
+.footer-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-family:
+    SFMono-Regular, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC",
+    monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.topline {
+  min-height: 4.75rem;
+  border-bottom: 1px solid #b9cbc7;
+}
+
+.wordmark {
+  margin: 0;
+  color: #102f3a;
+  font-weight: 700;
+}
+
+.locale-mark {
+  margin: 0;
+  color: #52686c;
+}
+
+.ledger-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(17rem, 0.75fr);
+  grid-template-areas:
+    "opening plate"
+    "prepare plate";
+  column-gap: clamp(2rem, 7vw, 7.5rem);
+  align-content: center;
+  padding: clamp(3rem, 9vh, 7rem) 0;
+  position: relative;
+}
+
+.ledger-page::before {
+  content: "";
+  position: absolute;
+  inset: clamp(2.5rem, 7vh, 5.5rem) 0;
+  z-index: -1;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(2rem - 1px),
+    rgba(16, 47, 58, 0.055) calc(2rem - 1px),
+    rgba(16, 47, 58, 0.055) 2rem
+  );
+  mask-image: linear-gradient(to right, #000 0 64%, transparent 90%);
+}
+
+.opening {
+  grid-area: opening;
+  max-width: 48rem;
+}
+
+.eyebrow,
+.utility-label {
+  margin: 0 0 1.25rem;
+  color: #167c78;
+  font-family:
+    SFMono-Regular, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC",
+    monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  color: #102f3a;
+  font-family:
+    "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+  font-size: clamp(2.65rem, 7vw, 6.8rem);
+  font-weight: 600;
+  letter-spacing: -0.065em;
+  line-height: 0.94;
+}
+
+.thesis {
+  max-width: 39rem;
+  margin: 1.75rem 0 0;
+  color: #102f3a;
+  font-family:
+    "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+  font-size: clamp(1.5rem, 2.8vw, 2.65rem);
+  line-height: 1.28;
+}
+
+.intro {
+  max-width: 35rem;
+  margin: 1.5rem 0 0;
+  color: #52686c;
+  font-size: 0.98rem;
+  line-height: 1.8;
+}
+
+.privacy-line {
+  margin: 2rem 0 0;
+  padding-left: 0.85rem;
+  color: #167c78;
+  border-left: 2px solid #167c78;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.device-plate {
+  grid-area: plate;
+  align-self: stretch;
+  min-height: 25rem;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(1.5rem, 3vw, 2.5rem);
+  color: #edf5f2;
+  background: #102f3a;
+  border-radius: 1.5rem 0.35rem 1.5rem 0.35rem;
+  box-shadow: 0 1.5rem 4rem rgba(16, 47, 58, 0.14);
+}
+
+.plate-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 1.4rem;
+  border-bottom: 1px solid rgba(220, 230, 227, 0.22);
+}
+
+.plate-heading .utility-label {
+  margin: 0;
+  color: #b6d9d3;
+}
+
+.status-pip {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #c58a35;
+}
+
+.status-pip[data-phase="ready"] {
+  background: #65c9bd;
+  animation: status-arrival 280ms ease-out both;
+}
+
+.status-pip[data-phase="error"] {
+  background: #e0a266;
+}
+
+.device-status {
+  display: grid;
+  gap: 0.75rem;
+  margin: 2.25rem 0 auto;
+}
+
+.device-status strong {
+  max-width: 15rem;
+  font-family:
+    "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+  font-size: clamp(1.45rem, 2.5vw, 2rem);
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.device-status span {
+  color: #b6c8c7;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.device-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.2rem;
+  margin: 3rem 0 0;
+}
+
+.device-facts div {
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(220, 230, 227, 0.22);
+}
+
+.device-facts dt {
+  color: #91aaa8;
+  font-size: 0.67rem;
+  letter-spacing: 0.08em;
+}
+
+.device-facts dd {
+  margin: 0.45rem 0 0;
+  font-family:
+    SFMono-Regular, Consolas, "Cascadia Mono", "Noto Sans Mono CJK SC",
+    monospace;
+  font-size: 0.78rem;
+}
+
+.preparation {
+  grid-area: prepare;
+  max-width: 40rem;
+  margin-top: clamp(3.5rem, 8vh, 6rem);
+  padding: 1.4rem 0 0 1.5rem;
+  border-top: 1px solid #b9cbc7;
+  border-left: 3px solid #c58a35;
+}
+
+.preparation .utility-label {
+  margin-bottom: 0.7rem;
+  color: #9b6928;
+}
+
+.preparation h2 {
+  margin: 0;
+  color: #102f3a;
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  font-weight: 650;
+}
+
+.preparation > p:last-child {
+  max-width: 34rem;
+  margin: 0.8rem 0 0;
+  color: #52686c;
+  font-size: 0.84rem;
+  line-height: 1.7;
+}
+
+.footer-line {
+  min-height: 4.25rem;
+  color: #6d7d7f;
+  border-top: 1px solid #b9cbc7;
+}
+
+@keyframes status-arrival {
+  from {
+    transform: scale(0.55);
+    opacity: 0.5;
+  }
+}
+
+@media (max-width: 780px) {
+  body {
+    background: #f6f8f6;
+  }
+
+  .ledger-page {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "opening"
+      "plate"
+      "prepare";
+    gap: 2.5rem;
+    align-content: start;
+  }
+
+  .ledger-page::before {
+    inset: 2rem 0 auto;
+    height: 18rem;
+    mask-image: linear-gradient(to bottom, #000, transparent);
+  }
+
+  .device-plate {
+    min-height: 19rem;
+  }
+
+  .preparation {
+    margin-top: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-shell {
+    padding: 0 1rem;
+  }
+
+  .topline {
+    min-height: 4rem;
+  }
+
+  .ledger-page {
+    padding: 2.5rem 0;
+  }
+
+  .footer-line span:last-child {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
