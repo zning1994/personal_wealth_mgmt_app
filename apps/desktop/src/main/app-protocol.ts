@@ -1,4 +1,5 @@
 import { net, protocol } from "electron";
+import { lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -39,6 +40,42 @@ function pathImplementation(
     return path.win32;
   if (path.posix.isAbsolute(rendererRoot)) return path.posix;
   throw new Error("Renderer root must be absolute");
+}
+
+function canonicalRendererRoot(rendererRoot: string): string {
+  try {
+    const metadata = lstatSync(rendererRoot);
+    if (metadata.isSymbolicLink() || !metadata.isDirectory())
+      return rejectAssetUrl();
+    return realpathSync(rendererRoot);
+  } catch {
+    return rejectAssetUrl();
+  }
+}
+
+function canonicalContainedFile(
+  assetPath: string,
+  canonicalRoot: string,
+): string {
+  try {
+    const metadata = lstatSync(assetPath);
+    if (metadata.isSymbolicLink() || !metadata.isFile())
+      return rejectAssetUrl();
+    const canonicalAsset = realpathSync(assetPath);
+    const pathApi = pathImplementation(canonicalRoot);
+    const relative = pathApi.relative(canonicalRoot, canonicalAsset);
+    if (
+      relative === "" ||
+      relative === ".." ||
+      relative.startsWith(`..${pathApi.sep}`) ||
+      pathApi.isAbsolute(relative)
+    ) {
+      return rejectAssetUrl();
+    }
+    return canonicalAsset;
+  } catch {
+    return rejectAssetUrl();
+  }
 }
 
 export function resolveRendererAsset(
@@ -107,6 +144,17 @@ export function resolveRendererAsset(
   return assetPath;
 }
 
+export function resolveCanonicalRendererAsset(
+  requestUrl: string,
+  rendererRoot: string,
+): string {
+  const canonicalRoot = canonicalRendererRoot(rendererRoot);
+  return canonicalContainedFile(
+    resolveRendererAsset(requestUrl, canonicalRoot),
+    canonicalRoot,
+  );
+}
+
 export function registerApplicationProtocolScheme(): void {
   protocol.registerSchemesAsPrivileged([
     {
@@ -136,19 +184,17 @@ export function isApplicationAssetFileUrl(candidate: string): boolean {
     return false;
   }
 
-  const pathApi = pathImplementation(installedRendererRoot);
-  const relative = pathApi.relative(installedRendererRoot, candidatePath);
-  return (
-    relative !== "" &&
-    relative !== ".." &&
-    !relative.startsWith(`..${pathApi.sep}`) &&
-    !pathApi.isAbsolute(relative)
-  );
+  try {
+    canonicalContainedFile(candidatePath, installedRendererRoot);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function installApplicationProtocol(rendererRoot: string): void {
-  const normalizedRoot = pathImplementation(rendererRoot).resolve(rendererRoot);
-  if (installedRendererRoot === normalizedRoot) return;
+  const canonicalRoot = canonicalRendererRoot(rendererRoot);
+  if (installedRendererRoot === canonicalRoot) return;
   if (installedRendererRoot !== undefined) {
     throw new Error(
       "Application protocol is already installed for another renderer root",
@@ -156,8 +202,11 @@ export function installApplicationProtocol(rendererRoot: string): void {
   }
 
   protocol.handle(APPLICATION_SCHEME, async (request) => {
-    const assetPath = resolveRendererAsset(request.url, normalizedRoot);
+    const assetPath = canonicalContainedFile(
+      resolveRendererAsset(request.url, canonicalRoot),
+      canonicalRoot,
+    );
     return net.fetch(pathToFileURL(assetPath).toString());
   });
-  installedRendererRoot = normalizedRoot;
+  installedRendererRoot = canonicalRoot;
 }

@@ -100,17 +100,42 @@ describe("window security", () => {
 
     const networkHandler = onBeforeRequest.mock.calls[0]?.[1];
     const internalCallback = vi.fn();
+    const rendererCallback = vi.fn();
+    const wrongTypeCallback = vi.fn();
     const externalCallback = vi.fn();
     networkHandler?.(
-      { url: "file:///app/out/renderer/index.html" } as never,
+      {
+        url: "file:///app/out/renderer/index.html",
+        resourceType: "other",
+      } as never,
       internalCallback,
     );
     networkHandler?.(
-      { url: "file:///private/statement.pdf" } as never,
+      {
+        url: "file:///app/out/renderer/index.html",
+        resourceType: "other",
+        webContentsId: 42,
+        webContents: {},
+        frame: {},
+      } as never,
+      rendererCallback,
+    );
+    networkHandler?.(
+      {
+        url: "file:///app/out/renderer/index.html",
+        resourceType: "xhr",
+      } as never,
+      wrongTypeCallback,
+    );
+    networkHandler?.(
+      { url: "file:///private/statement.pdf", resourceType: "other" } as never,
       externalCallback,
     );
     expect(internalCallback).toHaveBeenCalledWith({ cancel: false });
+    expect(rendererCallback).toHaveBeenCalledWith({ cancel: true });
+    expect(wrongTypeCallback).toHaveBeenCalledWith({ cancel: true });
     expect(externalCallback).toHaveBeenCalledWith({ cancel: true });
+    expect(isInternalAsset).toHaveBeenCalledTimes(2);
   });
 
   it("installs each session policy only once", () => {

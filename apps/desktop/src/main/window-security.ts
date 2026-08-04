@@ -1,4 +1,9 @@
-import type { Session, WebContents, WebPreferences } from "electron";
+import type {
+  OnBeforeRequestListenerDetails,
+  Session,
+  WebContents,
+  WebPreferences,
+} from "electron";
 
 const securedSessions = new WeakSet<Session>();
 
@@ -47,9 +52,27 @@ export function installWindowSecurity(
   targetSession.webRequest.onBeforeRequest(
     { urls: ["http://*/*", "https://*/*", "file://*/*"] },
     (details, callback) =>
-      callback({ cancel: !isInternalFileRequest(details.url) }),
+      callback({
+        cancel: !isProtocolInternalFileRequest(details, isInternalFileRequest),
+      }),
   );
   securedSessions.add(targetSession);
+}
+
+export function isProtocolInternalFileRequest(
+  details: Pick<
+    OnBeforeRequestListenerDetails,
+    "url" | "resourceType" | "webContentsId" | "webContents" | "frame"
+  >,
+  isInternalFileRequest: (url: string) => boolean,
+): boolean {
+  return (
+    details.resourceType === "other" &&
+    details.webContentsId === undefined &&
+    details.webContents === undefined &&
+    details.frame === undefined &&
+    isInternalFileRequest(details.url)
+  );
 }
 
 export function lockWebContents(

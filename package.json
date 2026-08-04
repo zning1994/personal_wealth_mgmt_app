@@ -9,7 +9,7 @@
   "scripts": {
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
-    "test": "vitest run",
+    "test": "pnpm -r test",
     "build": "pnpm -r build",
     "smoke:dist": "pnpm --filter @pwm/desktop smoke:dist",
     "test:e2e": "pnpm --filter @pwm/desktop test:e2e",

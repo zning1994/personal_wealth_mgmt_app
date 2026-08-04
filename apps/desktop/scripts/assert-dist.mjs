@@ -1,6 +1,7 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertRegularFile, filesBelow } from "./dist-files.mjs";
 
 const desktopRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -17,32 +18,8 @@ const forbiddenWorkspaceRuntimeSpecifiers = ["@pwm/contracts", "workspace:*"];
 const requiredContentSecurityPolicy =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 
-async function assertRegularFile(relativePath) {
-  const artifact = path.join(desktopRoot, relativePath);
-  let metadata;
-  try {
-    metadata = await stat(artifact);
-  } catch {
-    throw new Error(`Missing required desktop artifact: ${relativePath}`);
-  }
-  if (!metadata.isFile()) {
-    throw new Error(`Desktop artifact is not a regular file: ${relativePath}`);
-  }
-}
-
-async function filesBelow(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const nested = await Promise.all(
-    entries.map(async (entry) => {
-      const entryPath = path.join(directory, entry.name);
-      return entry.isDirectory() ? filesBelow(entryPath) : [entryPath];
-    }),
-  );
-  return nested.flat();
-}
-
 for (const artifact of requiredArtifacts) {
-  await assertRegularFile(artifact);
+  await assertRegularFile(path.join(desktopRoot, artifact), artifact);
 }
 
 const rendererRoot = path.join(desktopRoot, "out", "renderer");
