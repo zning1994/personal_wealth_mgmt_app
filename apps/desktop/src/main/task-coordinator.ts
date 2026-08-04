@@ -57,9 +57,17 @@ export class TaskCoordinator {
     const taskId = TaskIdSchema.parse(this.createId());
     if (this.active.has(taskId) || this.issued.has(taskId)) return { taskId };
 
+    const issuedBeforeStart = new Set(this.issued);
     rememberIssued(this.issued, taskId, this.issuedCapacity);
     this.active.add(taskId);
-    this.port.postMessage({ type: "start", taskId, task: input });
+    try {
+      this.port.postMessage({ type: "start", taskId, task: input });
+    } catch (error) {
+      this.active.delete(taskId);
+      this.issued.clear();
+      for (const issuedTaskId of issuedBeforeStart) this.issued.add(issuedTaskId);
+      throw error;
+    }
     return { taskId };
   }
 
@@ -67,8 +75,8 @@ export class TaskCoordinator {
     if (this.disposed || !this.active.has(input.taskId)) return { cancelled: false };
 
     if (!this.cancellationRequested.has(input.taskId)) {
-      this.cancellationRequested.add(input.taskId);
       this.port.postMessage({ type: "cancel", taskId: input.taskId });
+      if (this.active.has(input.taskId)) this.cancellationRequested.add(input.taskId);
     }
 
     return { cancelled: true };
@@ -80,9 +88,9 @@ export class TaskCoordinator {
     for (const taskId of this.active) {
       if (this.cancellationRequested.has(taskId)) continue;
 
-      this.cancellationRequested.add(taskId);
       try {
         this.port.postMessage({ type: "cancel", taskId });
+        if (this.active.has(taskId)) this.cancellationRequested.add(taskId);
       } catch {
         // Disposal is best-effort: keep shutting down after a transport failure.
       }

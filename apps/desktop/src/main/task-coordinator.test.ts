@@ -227,4 +227,46 @@ describe("TaskCoordinator", () => {
     ]);
     expect(utility.unsubscribe).toHaveBeenCalledOnce();
   });
+
+  it("retries a cancellation during disposal after its first synchronous send failure", () => {
+    const utility = createPort();
+    const taskId = "018f4f7e-8ead-7c0d-8000-000000000028" as TaskId;
+    const coordinator = new TaskCoordinator(utility.port, vi.fn(), () => taskId);
+    coordinator.start(taskInput);
+    utility.postMessage.mockImplementationOnce(() => {
+      throw new Error("cancel was not delivered");
+    });
+
+    expect(() => coordinator.cancel({ taskId })).toThrow("cancel was not delivered");
+    expect(coordinator.diagnosticCounts()).toEqual({ active: 1, issued: 1, cancellationRequested: 0 });
+
+    coordinator.dispose();
+    coordinator.dispose();
+
+    const cancellationMessages = utility.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === "cancel");
+    expect(cancellationMessages).toEqual([
+      { type: "cancel", taskId },
+      { type: "cancel", taskId },
+    ]);
+    expect(utility.unsubscribe).toHaveBeenCalledOnce();
+    expect(coordinator.diagnosticCounts()).toEqual({ active: 0, issued: 1, cancellationRequested: 0 });
+  });
+
+  it("rolls back a failed start so the same generated ID can retry", () => {
+    const utility = createPort();
+    const taskId = "018f4f7e-8ead-7c0d-8000-000000000029" as TaskId;
+    const coordinator = new TaskCoordinator(utility.port, vi.fn(), () => taskId);
+    utility.postMessage.mockImplementationOnce(() => {
+      throw new Error("start was not delivered");
+    });
+
+    expect(() => coordinator.start(taskInput)).toThrow("start was not delivered");
+    expect(coordinator.diagnosticCounts()).toEqual({ active: 0, issued: 0, cancellationRequested: 0 });
+
+    expect(coordinator.start(taskInput)).toEqual({ taskId });
+    expect(coordinator.diagnosticCounts()).toEqual({ active: 1, issued: 1, cancellationRequested: 0 });
+    expect(utility.postMessage).toHaveBeenLastCalledWith({ type: "start", taskId, task: taskInput });
+  });
 });
