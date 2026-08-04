@@ -13,6 +13,7 @@
     "@pwm/contracts": "workspace:*",
     "@pwm/domain": "workspace:*",
     "@pwm/ai": "workspace:*",
-    "@pwm/fx": "workspace:*"
+    "@pwm/fx": "workspace:*",
+    "zod": "^3.25.76"
   }
 }

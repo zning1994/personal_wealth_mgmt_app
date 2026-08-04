@@ -145,6 +145,9 @@ importers:
       '@pwm/fx':
         specifier: workspace:*
         version: link:../fx
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   packages/contracts:
     dependencies:
