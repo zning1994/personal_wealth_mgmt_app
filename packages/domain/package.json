@@ -11,5 +11,8 @@
   },
   "dependencies": {
     "@pwm/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "fast-check": "4.9.0"
   }
 }
