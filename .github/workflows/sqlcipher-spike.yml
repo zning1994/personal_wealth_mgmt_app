@@ -1,0 +1,117 @@
+name: Protected SQLCipher signing spike
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    environment: sqlcipher-spike
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            platform: darwin
+            arch: arm64
+            requireSignature: true
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+            requireSignature: true
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+            requireSignature: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      CSC_LINK: ${{ matrix.platform == 'darwin' && secrets.CSC_LINK || '' }}
+      CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.CSC_KEY_PASSWORD || '' }}
+      APPLE_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_ID || '' }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+      APPLE_TEAM_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_TEAM_ID || '' }}
+      PWM_EXPECTED_PLATFORM: ${{ matrix.platform }}
+      PWM_EXPECTED_ARCH: ${{ matrix.arch }}
+      PWM_REQUIRE_SIGNED_PACKAGE: ${{ matrix.requireSignature }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pnpm install --frozen-lockfile
+      - name: Install official SQLCipher CLI (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          SQLCIPHER_SOURCE_REF: v4.17.0
+          SQLCIPHER_SOURCE_COMMIT: 810db22f575ee7cf94ea96a3e91622b5fcece3dc
+        run: |
+          set -euo pipefail
+          brew install openssl@3
+          sqlcipher_root="$RUNNER_TEMP/sqlcipher"
+          git clone --depth 1 --branch "$SQLCIPHER_SOURCE_REF" https://github.com/sqlcipher/sqlcipher.git "$sqlcipher_root"
+          cd "$sqlcipher_root"
+          test "$(git rev-parse HEAD)" = "$SQLCIPHER_SOURCE_COMMIT"
+          openssl_prefix="$(brew --prefix openssl@3)"
+          ./configure --with-tempstore=yes \
+            CFLAGS="-DSQLITE_HAS_CODEC -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -DSQLCIPHER_CRYPTO_OPENSSL -I${openssl_prefix}/include" \
+            LDFLAGS="-L${openssl_prefix}/lib -lcrypto"
+          make -j"$(sysctl -n hw.ncpu)" sqlite3
+          printf 'PWM_SQLCIPHER_OFFICIAL_CLI=%s\n' "$sqlcipher_root/sqlite3" >> "$GITHUB_ENV"
+          "$sqlcipher_root/sqlite3" --version
+      - name: Install MSYS2 toolchain (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-openssl
+      - name: Install official SQLCipher CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          SQLCIPHER_SOURCE_REF: v4.17.0
+          SQLCIPHER_SOURCE_COMMIT: 810db22f575ee7cf94ea96a3e91622b5fcece3dc
+        run: |
+          set -euo pipefail
+          sqlcipher_root="$(cygpath -u "$RUNNER_TEMP")/sqlcipher"
+          git clone --depth 1 --branch "$SQLCIPHER_SOURCE_REF" https://github.com/sqlcipher/sqlcipher.git "$sqlcipher_root"
+          cd "$sqlcipher_root"
+          test "$(git rev-parse HEAD)" = "$SQLCIPHER_SOURCE_COMMIT"
+          ./configure --with-tempstore=yes \
+            CFLAGS="-DSQLITE_HAS_CODEC -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -DSQLCIPHER_CRYPTO_OPENSSL" \
+            LDFLAGS="-lcrypto"
+          make -j"$(nproc)" sqlite3
+          printf '%s\n' "$(cygpath -w /mingw64/bin)" >> "$GITHUB_PATH"
+          printf 'PWM_SQLCIPHER_OFFICIAL_CLI=%s\n' "$(cygpath -w "$sqlcipher_root/sqlite3.exe")" >> "$GITHUB_ENV"
+          "$sqlcipher_root/sqlite3.exe" --version
+      - name: Verify protected inputs
+        run: node -e "const required=process.platform==='darwin'?['CSC_LINK','CSC_KEY_PASSWORD','APPLE_ID','APPLE_APP_SPECIFIC_PASSWORD','APPLE_TEAM_ID']:[]; for (const key of required) if (!process.env[key]) throw new Error('missing protected input: '+key)"
+      - run: pnpm --filter @pwm/storage spike:sqlcipher
+      - run: pnpm --filter @pwm/storage assert:spike
+      - name: Upload immutable spike evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcipher-spike-${{ github.sha }}-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            artifacts/sqlcipher-spike/${{ matrix.platform }}-${{ matrix.arch }}.json
+            artifacts/sqlcipher-spike/**/*.log
