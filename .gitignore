@@ -1,0 +1,8 @@
+# Planning artifacts remain local until the user approves publication.
+/docs/
+
+# Local brainstorming visual companion state.
+/.superpowers/
+
+# Project-local isolated implementation worktrees.
+/.worktrees/
