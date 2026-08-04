@@ -22,6 +22,10 @@ export interface ExpectedSpikeRunner {
   readonly arch: SqlCipherSpikeReport["arch"];
 }
 
+export interface SpikeReportAssertionOptions {
+  readonly requireSignedPackageLaunch?: boolean;
+}
+
 const reportKeys = [
   "platform",
   "arch",
@@ -91,10 +95,12 @@ export function parseSpikeReport(value: unknown): SqlCipherSpikeReport {
 export function assertSpikeReport(
   report: SqlCipherSpikeReport,
   expectedRunner: ExpectedSpikeRunner,
+  options: SpikeReportAssertionOptions = {},
 ): SqlCipherSpikeReport {
   if (report.platform !== expectedRunner.platform || report.arch !== expectedRunner.arch) {
     throw new Error("sqlcipher-spike-runner-mismatch");
   }
+  const requireSignedPackageLaunch = options.requireSignedPackageLaunch ?? true;
   if (
     !report.wrongKeyRejected ||
     report.electronVersion !== "43.2.0" ||
@@ -107,7 +113,7 @@ export function assertSpikeReport(
     !report.backupRoundTrip ||
     !report.packagedNativeLoad ||
     !report.sqlCipher4Compatibility ||
-    !report.signedPackageLaunch
+    (requireSignedPackageLaunch && !report.signedPackageLaunch)
   ) {
     throw new Error("sqlcipher-spike-gate-failed");
   }

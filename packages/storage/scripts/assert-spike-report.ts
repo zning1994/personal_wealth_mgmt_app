@@ -16,11 +16,19 @@ function expectedRunner(): ExpectedSpikeRunner {
   return { platform, arch };
 }
 
+function requireSignedPackageLaunch(): boolean {
+  const value = process.env.PWM_REQUIRE_SIGNED_PACKAGE ?? "true";
+  if (value !== "true" && value !== "false") {
+    throw new Error("invalid-require-signed-package-setting");
+  }
+  return value === "true";
+}
+
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const runner = expectedRunner();
 const reportPath =
   process.env.PWM_SQLCIPHER_SPIKE_REPORT ??
   path.join(repositoryRoot, "artifacts", "sqlcipher-spike", `${runner.platform}-${runner.arch}.json`);
 const report = parseSpikeReport(JSON.parse(await readFile(reportPath, "utf8")));
-assertSpikeReport(report, runner);
+assertSpikeReport(report, runner, { requireSignedPackageLaunch: requireSignedPackageLaunch() });
 process.stdout.write(`SQLCipher spike gate passed for ${runner.platform}-${runner.arch}.\n`);

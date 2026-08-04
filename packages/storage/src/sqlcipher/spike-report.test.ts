@@ -54,6 +54,22 @@ describe("SQLCipher spike report gate", () => {
     ).toThrow(expectedError);
   });
 
+  it("accepts an unsigned Windows package when signature verification is explicitly optional", () => {
+    const unsignedWindowsReport = parseSpikeReport({
+      ...passingReport,
+      platform: "win32",
+      arch: "x64",
+      signedPackageLaunch: false,
+    });
+    expect(
+      assertSpikeReport(
+        unsignedWindowsReport,
+        { platform: "win32", arch: "x64" },
+        { requireSignedPackageLaunch: false },
+      ),
+    ).toEqual(unsignedWindowsReport);
+  });
+
   it("rejects a report produced on a runner that does not match its label", () => {
     expect(() =>
       assertSpikeReport(parseSpikeReport(passingReport), {
