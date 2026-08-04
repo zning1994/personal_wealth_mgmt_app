@@ -5,6 +5,7 @@ export interface SqlCipherSpikeReport {
   readonly arch: "arm64" | "x64";
   readonly electronVersion: string;
   readonly bindingVersion: string;
+  readonly officialSqlCipherVersion: string;
   readonly cipherImplementation: "better-sqlite3-multiple-ciphers";
   readonly cipherMode: "sqlcipher-legacy-4";
   readonly wrongKeyRejected: boolean;
@@ -26,6 +27,7 @@ const reportKeys = [
   "arch",
   "electronVersion",
   "bindingVersion",
+  "officialSqlCipherVersion",
   "cipherImplementation",
   "cipherMode",
   "wrongKeyRejected",
@@ -67,6 +69,8 @@ export function parseSpikeReport(value: unknown): SqlCipherSpikeReport {
     value.electronVersion.length === 0 ||
     typeof value.bindingVersion !== "string" ||
     value.bindingVersion.length === 0 ||
+    typeof value.officialSqlCipherVersion !== "string" ||
+    value.officialSqlCipherVersion.length === 0 ||
     value.cipherImplementation !== "better-sqlite3-multiple-ciphers" ||
     value.cipherMode !== "sqlcipher-legacy-4" ||
     typeof value.wrongKeyRejected !== "boolean" ||
@@ -95,6 +99,7 @@ export function assertSpikeReport(
     !report.wrongKeyRejected ||
     report.electronVersion !== "43.2.0" ||
     report.bindingVersion !== "12.11.1" ||
+    report.officialSqlCipherVersion === "unobserved" ||
     report.cipherImplementation !== "better-sqlite3-multiple-ciphers" ||
     report.cipherMode !== "sqlcipher-legacy-4" ||
     report.plaintextHits.length !== 0 ||

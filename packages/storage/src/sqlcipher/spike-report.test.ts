@@ -6,6 +6,7 @@ const passingReport = {
   arch: "arm64",
   electronVersion: "43.2.0",
   bindingVersion: "12.11.1",
+  officialSqlCipherVersion: "SQLCipher 4.6.1 Community",
   cipherImplementation: "better-sqlite3-multiple-ciphers",
   cipherMode: "sqlcipher-legacy-4",
   wrongKeyRejected: true,
@@ -43,6 +44,7 @@ describe("SQLCipher spike report gate", () => {
     ["unsigned package", { signedPackageLaunch: false }, "sqlcipher-spike-gate-failed"],
     ["wrong Electron", { electronVersion: "43.1.0" }, "sqlcipher-spike-gate-failed"],
     ["wrong binding", { bindingVersion: "12.11.0" }, "sqlcipher-spike-gate-failed"],
+    ["unobserved official CLI", { officialSqlCipherVersion: "unobserved" }, "sqlcipher-spike-gate-failed"],
   ])("rejects %s", (_name, change, expectedError) => {
     expect(() =>
       assertSpikeReport(parseSpikeReport({ ...passingReport, ...change }), {

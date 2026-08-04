@@ -91,6 +91,7 @@ describe("SQLCipher spike evidence", () => {
           arch: "arm64",
           electronVersion: "43.2.0",
           bindingVersion: "12.11.1",
+          officialSqlCipherVersion: "SQLCipher 4.6.1 Community",
           cipherImplementation: "better-sqlite3-multiple-ciphers",
           cipherMode: "sqlcipher-legacy-4",
           wrongKeyRejected: true,

@@ -41,6 +41,12 @@ interface CommandResult {
 interface CapturedCommandResult extends CommandResult {
   readonly stdout: string;
   readonly stderr: string;
+  readonly timedOut: boolean;
+}
+
+interface OfficialCompatibilityEvidence {
+  readonly compatible: boolean;
+  readonly version: string;
 }
 
 interface UtilityCrashEvidence {
@@ -88,6 +94,7 @@ function runCapturedCommand(
   command: string,
   args: readonly string[],
   input: string,
+  options: { readonly timeoutMs?: number } = {},
 ): Promise<CapturedCommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, [...args], {
@@ -97,17 +104,27 @@ function runCapturedCommand(
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, options.timeoutMs ?? 15_000);
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    child.once("exit", (exitCode, signal) =>
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (exitCode, signal) => {
+      clearTimeout(timeout);
       resolve({
         exitCode,
         signal,
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8"),
-      }),
-    );
+        timedOut,
+      });
+    });
     child.stdin.end(input);
   });
 }
@@ -485,14 +502,20 @@ app.whenReady().then(() => {
 async function proveOfficialSqlCipher4Compatibility(
   root: string,
   key: Uint8Array,
-): Promise<boolean> {
+): Promise<OfficialCompatibilityEvidence> {
   const officialCli = process.env.PWM_SQLCIPHER_OFFICIAL_CLI ?? "sqlcipher";
   const version = await runCapturedCommand(officialCli, ["--version"], "").catch(() => undefined);
-  if (!version || version.exitCode !== 0) return false;
-  if (!isOfficialSqlCipher4Version(
-    `${version.stdout}\n${version.stderr}`,
-    process.env.PWM_SQLCIPHER_VERSION_PATTERN,
-  )) return false;
+  const versionOutput = version ? `${version.stdout}\n${version.stderr}` : "";
+  const versionSummary = versionOutput
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+    ?.replace(/[^\x20-\x7e]/gu, "?")
+    .slice(0, 256) ?? "unobserved";
+  if (!version || version.exitCode !== 0 || version.timedOut ||
+      !isOfficialSqlCipher4Version(versionOutput)) {
+    return { compatible: false, version: versionSummary };
+  }
 
   const officialDatabase = path.join(root, "official-to-candidate.db");
   const candidateDatabase = path.join(root, "candidate-to-official.db");
@@ -502,7 +525,9 @@ async function proveOfficialSqlCipher4Compatibility(
     [officialDatabase],
     `PRAGMA key="${keyLiteral}";\nPRAGMA cipher_compatibility=4;\nCREATE TABLE fixture(value TEXT NOT NULL);\nINSERT INTO fixture VALUES('official');\n.quit\n`,
   );
-  if (officialCreate.exitCode !== 0) return false;
+  if (officialCreate.exitCode !== 0 || officialCreate.timedOut) {
+    return { compatible: false, version: versionSummary };
+  }
   const candidateRead = await openSqlCipher({ filePath: officialDatabase, key, mode: "read-only" })
     .then(async (database) => {
       try {
@@ -512,7 +537,7 @@ async function proveOfficialSqlCipher4Compatibility(
       }
     })
     .catch(() => false);
-  if (!candidateRead) return false;
+  if (!candidateRead) return { compatible: false, version: versionSummary };
 
   const candidate = await openSqlCipher({ filePath: candidateDatabase, key, mode: "read-write" });
   await candidate.exec("CREATE TABLE fixture(value TEXT NOT NULL)");
@@ -523,7 +548,13 @@ async function proveOfficialSqlCipher4Compatibility(
     [candidateDatabase],
     `PRAGMA key="${keyLiteral}";\nPRAGMA cipher_compatibility=4;\nSELECT value FROM fixture;\n.quit\n`,
   );
-  return officialRead.exitCode === 0 && officialRead.stdout.split(/\r?\n/u).includes("candidate");
+  return {
+    compatible:
+      officialRead.exitCode === 0 &&
+      !officialRead.timedOut &&
+      officialRead.stdout.split(/\r?\n/u).includes("candidate"),
+    version: versionSummary,
+  };
 }
 
 async function writeReport(report: SqlCipherSpikeReport): Promise<string> {
@@ -556,6 +587,7 @@ async function runSpike(): Promise<SqlCipherSpikeReport> {
   let packagedNativeLoad = false;
   let signedPackageLaunch = false;
   let sqlCipher4Compatibility = false;
+  let officialSqlCipherVersion = "unobserved";
   let electronVersion = "unobserved";
   let bindingVersion = "unobserved";
   let plaintextHits: readonly PlaintextHit[] = [
@@ -613,7 +645,9 @@ async function runSpike(): Promise<SqlCipherSpikeReport> {
     backupRoundTrip = (await databaseHash(restored)) === sourceHash;
     await restored.close();
 
-    sqlCipher4Compatibility = await proveOfficialSqlCipher4Compatibility(root, key);
+    const officialCompatibility = await proveOfficialSqlCipher4Compatibility(root, key);
+    sqlCipher4Compatibility = officialCompatibility.compatible;
+    officialSqlCipherVersion = officialCompatibility.version;
     if (electronAppRoot) {
       const packageEvidence = await buildAndLaunchProbe(
         root,
@@ -644,6 +678,7 @@ async function runSpike(): Promise<SqlCipherSpikeReport> {
     arch: process.arch,
     electronVersion,
     bindingVersion,
+    officialSqlCipherVersion,
     cipherImplementation: BINDING_NAME,
     cipherMode: "sqlcipher-legacy-4",
     wrongKeyRejected,
