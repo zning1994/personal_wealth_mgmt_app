@@ -1,7 +1,8 @@
+import { UtilityReadySchema } from "@pwm/contracts";
 import { attachUtilityWorkerPort, type UtilityWorkerPort } from "./task-runtime";
 
 export const INVALID_WORKER_MESSAGE_DIAGNOSTIC = "invalid-worker-message";
-export const UTILITY_READY_MESSAGE = { type: "pwm:utility-ready" } as const;
+export const UTILITY_READY_MESSAGE = UtilityReadySchema.parse({ type: "pwm:utility-ready" });
 
 export interface UtilityParentPort {
   once(event: "message", listener: (event: { ports: unknown[] }) => void): void;

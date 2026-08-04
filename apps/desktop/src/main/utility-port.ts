@@ -1,5 +1,5 @@
 import { MessageChannelMain, type MessageEvent as ElectronMessageEvent, type UtilityProcess } from "electron";
-import { WorkerRequestSchema, WorkerResponseSchema, type WorkerRequest } from "@pwm/contracts";
+import { UtilityReadySchema, WorkerRequestSchema, WorkerResponseSchema, type WorkerRequest } from "@pwm/contracts";
 import type { UtilityPort } from "./task-coordinator";
 
 export type ManagedUtilityPort = UtilityPort & {
@@ -9,7 +9,6 @@ export type ManagedUtilityPort = UtilityPort & {
 
 const UTILITY_PORT_TRANSFER = "pwm:utility-port";
 const TRANSPORT_UNAVAILABLE = "Utility process transport is unavailable";
-const UTILITY_READY = "pwm:utility-ready";
 
 export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
   const channel = new MessageChannelMain();
@@ -28,7 +27,7 @@ export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
   void ready.catch(() => undefined);
 
   const onMessage = (event: ElectronMessageEvent) => {
-    if (event.data && typeof event.data === "object" && (event.data as { type?: unknown }).type === UTILITY_READY) {
+    if (UtilityReadySchema.safeParse(event.data).success) {
       resolveReady?.();
       resolveReady = undefined;
       rejectReady = undefined;
@@ -90,9 +89,17 @@ export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
     port.start();
   } catch (error) {
     available = false;
+    detachMessageListener();
     detachChildListeners();
     detachCloseListener();
     closePort();
+    try {
+      channel.port2.close();
+    } catch {
+      // Ownership transfer may already have closed the peer port.
+    }
+    rejectReady?.(new Error(TRANSPORT_UNAVAILABLE));
+    rejectReady = undefined;
     throw error;
   }
 

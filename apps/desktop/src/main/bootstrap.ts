@@ -1,7 +1,7 @@
 import { app } from "electron";
 import { startDesktop } from "./index";
 
-void startDesktop().catch((error: unknown) => {
-  console.error("Desktop startup failed", error);
+void startDesktop().catch(() => {
+  console.error("Desktop startup failed: STARTUP_FAILED");
   app.exit(1);
 });

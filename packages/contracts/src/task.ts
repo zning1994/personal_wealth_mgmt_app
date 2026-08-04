@@ -74,3 +74,6 @@ export const WorkerResponseSchema = z.discriminatedUnion("type", [
 ]);
 
 export type WorkerResponse = z.infer<typeof WorkerResponseSchema>;
+
+export const UtilityReadySchema = z.object({ type: z.literal("pwm:utility-ready") }).strict();
+export type UtilityReady = z.infer<typeof UtilityReadySchema>;

@@ -3,6 +3,7 @@ import {
   CancelTaskInputSchema,
   StartUtilityTaskInputSchema,
   TaskProgressSchema,
+  UtilityReadySchema,
   WorkerRequestSchema,
   WorkerResponseSchema,
 } from "./task";
@@ -10,6 +11,10 @@ import {
 const taskId = "018f4f7e-8ead-7c0d-8000-000000000001";
 
 describe("task schemas", () => {
+  it("accepts only the strict utility ready message", () => {
+    expect(UtilityReadySchema.parse({ type: "pwm:utility-ready" })).toEqual({ type: "pwm:utility-ready" });
+    expect(() => UtilityReadySchema.parse({ type: "pwm:utility-ready", extra: true })).toThrow();
+  });
   it("rejects echo values longer than 128 characters", () => {
     expect(() =>
       StartUtilityTaskInputSchema.parse({
