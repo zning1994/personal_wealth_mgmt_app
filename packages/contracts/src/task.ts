@@ -41,3 +41,36 @@ export const TaskProgressSchema = z
   })
   .strict()
   .refine(({ completed, total }) => completed <= total, "completed must not exceed total");
+
+export const WorkerRequestSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("start"),
+      taskId: TaskIdSchema,
+      task: StartUtilityTaskInputSchema,
+    })
+    .strict(),
+  z.object({ type: z.literal("cancel"), taskId: TaskIdSchema }).strict(),
+]);
+
+export type WorkerRequest = z.infer<typeof WorkerRequestSchema>;
+
+export const WorkerResponseSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("progress"), progress: TaskProgressSchema }).strict(),
+  z
+    .object({
+      type: z.literal("result"),
+      taskId: TaskIdSchema,
+      result: z.object({ echo: z.string() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("error"),
+      taskId: TaskIdSchema,
+      code: z.enum(["cancelled", "worker-failure"]),
+    })
+    .strict(),
+]);
+
+export type WorkerResponse = z.infer<typeof WorkerResponseSchema>;
