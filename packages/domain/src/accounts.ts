@@ -21,6 +21,7 @@ export interface Account {
 }
 
 export interface AccountOwnership {
+  readonly workspaceId: WorkspaceId;
   readonly accountId: AccountId;
   readonly profileId: ProfileId;
   readonly basisPoints: number;
@@ -54,15 +55,27 @@ export function createAccount(input: CreateAccountInput): Account {
 export function validateOwnership(
   account: Account,
   ownerships: readonly AccountOwnership[],
+  profiles: readonly Profile[],
 ): void {
   if (ownerships.length === 0) {
     throw new Error("At least one owner is required");
+  }
+
+  const profilesById = new Map<ProfileId, Profile>();
+  for (const profile of profiles) {
+    if (profilesById.has(profile.id)) {
+      throw new Error("Profile registry cannot contain a duplicate profile");
+    }
+    profilesById.set(profile.id, profile);
   }
 
   const seenProfileIds = new Set<ProfileId>();
   let total = 0;
 
   for (const ownership of ownerships) {
+    if (ownership.workspaceId !== account.workspaceId) {
+      throw new Error("Ownership row must reference the account workspace");
+    }
     if (ownership.accountId !== account.id) {
       throw new Error("Ownership row must reference the account");
     }
@@ -75,6 +88,17 @@ export function validateOwnership(
     }
     if (seenProfileIds.has(ownership.profileId)) {
       throw new Error("Ownership cannot contain a duplicate profile");
+    }
+
+    const profile = profilesById.get(ownership.profileId);
+    if (profile === undefined) {
+      throw new Error("Ownership profile does not exist");
+    }
+    if (profile.workspaceId !== account.workspaceId) {
+      throw new Error("Ownership profile must belong to the account workspace");
+    }
+    if (profile.deletedAt !== null) {
+      throw new Error("Ownership profile is deleted");
     }
 
     seenProfileIds.add(ownership.profileId);
