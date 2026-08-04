@@ -6,3 +6,17 @@
 
 # Project-local isolated implementation worktrees.
 /.worktrees/
+
+# Dependencies and generated build/test output.
+node_modules/
+dist/
+coverage/
+.vite/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# Machine-local artifacts.
+.env.local
+*.log
+.DS_Store
