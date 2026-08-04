@@ -102,7 +102,8 @@ jobs:
           printf 'PWM_SQLCIPHER_OFFICIAL_CLI=%s\n' "$(cygpath -w "$sqlcipher_root/sqlite3.exe")" >> "$GITHUB_ENV"
           "$sqlcipher_root/sqlite3.exe" --version
       - name: Verify protected inputs
-        run: node -e "const required=process.platform==='darwin'?['CSC_LINK','CSC_KEY_PASSWORD','APPLE_ID','APPLE_APP_SPECIFIC_PASSWORD','APPLE_TEAM_ID']:[]; for (const key of required) if (!process.env[key]) throw new Error('missing protected input: '+key)"
+        run: |
+          node -e "const required=process.platform==='darwin'?['CSC_LINK','CSC_KEY_PASSWORD','APPLE_ID','APPLE_APP_SPECIFIC_PASSWORD','APPLE_TEAM_ID']:[]; for (const key of required) if (!process.env[key]) throw new Error('missing protected input: '+key)"
       - run: pnpm --filter @pwm/storage spike:sqlcipher
       - run: pnpm --filter @pwm/storage assert:spike
       - name: Upload immutable spike evidence
