@@ -14,33 +14,57 @@ export interface UtilityPort {
   onMessage(listener: (message: unknown) => void): () => void;
 }
 
+export const DEFAULT_ISSUED_TASK_CAPACITY = 256;
+
+export interface TaskCoordinatorOptions {
+  issuedCapacity?: number;
+}
+
+function resolveIssuedCapacity(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_ISSUED_TASK_CAPACITY;
+  if (!Number.isInteger(value) || value < 1) throw new Error("Issued task capacity must be a positive integer");
+  return value;
+}
+
+function rememberIssued(issued: Set<TaskId>, taskId: TaskId, capacity: number): void {
+  issued.add(taskId);
+  if (issued.size > capacity) issued.delete(issued.values().next().value as TaskId);
+}
+
 export class TaskCoordinator {
   private readonly active = new Set<TaskId>();
   private readonly issued = new Set<TaskId>();
   private readonly cancellationRequested = new Set<TaskId>();
   private readonly createId: () => TaskId;
+  private readonly issuedCapacity: number;
+  private unsubscribe: (() => void) | undefined;
+  private disposed = false;
 
   constructor(
     private readonly port: UtilityPort,
     private readonly publish: (progress: TaskProgress) => void,
     createId?: () => TaskId,
+    options: TaskCoordinatorOptions = {},
   ) {
     this.createId = createId ?? (() => TaskIdSchema.parse(crypto.randomUUID()));
-    this.port.onMessage((message) => this.receiveWorkerMessage(message));
+    this.issuedCapacity = resolveIssuedCapacity(options.issuedCapacity);
+    this.unsubscribe = this.port.onMessage((message) => this.receiveWorkerMessage(message));
   }
 
   start(input: StartUtilityTaskInput): TaskStarted {
-    const taskId = TaskIdSchema.parse(this.createId());
-    if (this.issued.has(taskId)) return { taskId };
+    if (this.disposed) throw new Error("TaskCoordinator is disposed");
 
-    this.issued.add(taskId);
+    const taskId = TaskIdSchema.parse(this.createId());
+    if (this.active.has(taskId) || this.issued.has(taskId)) return { taskId };
+
+    rememberIssued(this.issued, taskId, this.issuedCapacity);
     this.active.add(taskId);
     this.port.postMessage({ type: "start", taskId, task: input });
     return { taskId };
   }
 
   cancel(input: CancelTaskInput): { cancelled: boolean } {
-    if (!this.active.has(input.taskId)) return { cancelled: false };
+    if (this.disposed || !this.active.has(input.taskId)) return { cancelled: false };
 
     if (!this.cancellationRequested.has(input.taskId)) {
       this.cancellationRequested.add(input.taskId);
@@ -50,7 +74,27 @@ export class TaskCoordinator {
     return { cancelled: true };
   }
 
+  dispose(): void {
+    if (this.disposed) return;
+
+    this.disposed = true;
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+    this.active.clear();
+    this.cancellationRequested.clear();
+  }
+
+  diagnosticCounts(): { active: number; issued: number; cancellationRequested: number } {
+    return {
+      active: this.active.size,
+      issued: this.issued.size,
+      cancellationRequested: this.cancellationRequested.size,
+    };
+  }
+
   private receiveWorkerMessage(message: unknown): void {
+    if (this.disposed) return;
+
     const parsed = WorkerResponseSchema.safeParse(message);
     if (!parsed.success) return;
 

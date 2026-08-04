@@ -1,4 +1,4 @@
-import { createTaskRuntime } from "./task-runtime";
+import { attachUtilityWorkerPort } from "./task-runtime";
 
 type UtilityParentPort = {
   postMessage(message: unknown): void;
@@ -11,8 +11,10 @@ if (!parentPort) {
   throw new Error("Utility worker requires process.parentPort");
 }
 
-const runtime = createTaskRuntime((message) => parentPort.postMessage(message));
-
-parentPort.on("message", (message) => {
-  void runtime.receive(message).catch(() => undefined);
+attachUtilityWorkerPort({
+  postMessage: (message) => parentPort.postMessage(message),
+  onMessage: (listener) => {
+    parentPort.on("message", listener);
+    return () => undefined;
+  },
 });

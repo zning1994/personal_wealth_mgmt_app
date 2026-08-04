@@ -4,18 +4,21 @@ import { TaskCoordinator, type UtilityPort } from "./task-coordinator";
 
 function createPort() {
   let listener: ((message: unknown) => void) | undefined;
+  const unsubscribe = vi.fn();
   const port: UtilityPort = {
     postMessage: vi.fn(),
     onMessage(nextListener) {
       listener = nextListener;
       return () => {
         listener = undefined;
+        unsubscribe();
       };
     },
   };
   return {
     port,
     postMessage: port.postMessage as ReturnType<typeof vi.fn>,
+    unsubscribe,
     receive(message: unknown) {
       listener?.(message);
     },
@@ -112,5 +115,93 @@ describe("TaskCoordinator", () => {
 
     expect(publish).toHaveBeenCalledTimes(1);
     expect(publish).toHaveBeenCalledWith({ taskId, phase: "running", completed: 0, total: 1 });
+  });
+
+  it("publishes completed progress before the terminal result clears the task", () => {
+    const utility = createPort();
+    const publish = vi.fn();
+    const taskId = "018f4f7e-8ead-7c0d-8000-000000000019" as TaskId;
+    const coordinator = new TaskCoordinator(utility.port, publish, () => taskId);
+    const task = coordinator.start(taskInput);
+
+    utility.receive({
+      type: "progress",
+      progress: { taskId: task.taskId, phase: "running", completed: 0, total: 1 },
+    });
+    utility.receive({
+      type: "progress",
+      progress: { taskId: task.taskId, phase: "completed", completed: 1, total: 1 },
+    });
+    utility.receive({ type: "result", taskId: task.taskId, result: { echo: "ok" } });
+
+    expect(publish.mock.calls.map(([progress]) => progress)).toEqual([
+      { taskId, phase: "running", completed: 0, total: 1 },
+      { taskId, phase: "completed", completed: 1, total: 1 },
+    ]);
+    expect(coordinator.cancel({ taskId: task.taskId })).toEqual({ cancelled: false });
+  });
+
+  it("bounds issued IDs while retaining a recent duplicate start", () => {
+    const utility = createPort();
+    const firstId = "018f4f7e-8ead-7c0d-8000-000000000020" as TaskId;
+    const secondId = "018f4f7e-8ead-7c0d-8000-000000000021" as TaskId;
+    const recentId = "018f4f7e-8ead-7c0d-8000-000000000022" as TaskId;
+    const ids = [firstId, secondId, recentId, recentId];
+    const coordinator = new TaskCoordinator(
+      utility.port,
+      vi.fn(),
+      () => ids.shift() as TaskId,
+      { issuedCapacity: 2 },
+    );
+
+    for (const currentTaskId of [firstId, secondId, recentId]) {
+      coordinator.start(taskInput);
+      utility.receive({ type: "result", taskId: currentTaskId, result: { echo: "ok" } });
+    }
+    coordinator.start(taskInput);
+
+    expect(coordinator.diagnosticCounts()).toEqual({ active: 0, issued: 2, cancellationRequested: 0 });
+    expect(utility.postMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not reuse an active ID after FIFO retention evicts its tombstone", () => {
+    const utility = createPort();
+    const activeId = "018f4f7e-8ead-7c0d-8000-000000000024" as TaskId;
+    const nextId = "018f4f7e-8ead-7c0d-8000-000000000025" as TaskId;
+    const ids = [activeId, nextId, activeId];
+    const coordinator = new TaskCoordinator(
+      utility.port,
+      vi.fn(),
+      () => ids.shift() as TaskId,
+      { issuedCapacity: 1 },
+    );
+
+    coordinator.start(taskInput);
+    coordinator.start(taskInput);
+    coordinator.start(taskInput);
+
+    expect(utility.postMessage).toHaveBeenCalledTimes(2);
+    expect(coordinator.cancel({ taskId: activeId })).toEqual({ cancelled: true });
+  });
+
+  it("disposes once, clears active state, and prevents further lifecycle calls", () => {
+    const utility = createPort();
+    const publish = vi.fn();
+    const taskId = "018f4f7e-8ead-7c0d-8000-000000000023" as TaskId;
+    const coordinator = new TaskCoordinator(utility.port, publish, () => taskId);
+    const task = coordinator.start(taskInput);
+
+    coordinator.dispose();
+    coordinator.dispose();
+    utility.receive({
+      type: "progress",
+      progress: { taskId: task.taskId, phase: "running", completed: 0, total: 1 },
+    });
+
+    expect(utility.unsubscribe).toHaveBeenCalledOnce();
+    expect(coordinator.cancel({ taskId: task.taskId })).toEqual({ cancelled: false });
+    expect(() => coordinator.start(taskInput)).toThrow("TaskCoordinator is disposed");
+    expect(publish).not.toHaveBeenCalled();
+    expect(coordinator.diagnosticCounts()).toEqual({ active: 0, issued: 1, cancellationRequested: 0 });
   });
 });
