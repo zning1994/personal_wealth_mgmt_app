@@ -65,17 +65,20 @@ describe("ISO date contracts", () => {
 
 describe("MoneyDto", () => {
   it("accepts integer minor units and normalizes currencies", () => {
-    expect(parseMoneyDto({ currency: "aed", minor: "-1250" })).toEqual({
+    const money = parseMoneyDto({ currency: "aed", minor: "-1250" });
+
+    expect(money).toEqual({
       currency: "AED",
       minor: "-1250",
     });
+    expect(Object.isFrozen(money)).toBe(true);
     expect(MoneyDtoSchema.parse({ currency: "uSd", minor: "0" })).toEqual({
       currency: "USD",
       minor: "0",
     });
   });
 
-  it.each(["12.50", "1e3", "01", "-01", "+1", "", " 1"])(
+  it.each(["12.50", "1e3", "01", "-01", "-0", "+1", "", " 1"])(
     "rejects non-canonical minor-unit string %j",
     (minor) => {
       expect(() => parseMoneyDto({ currency: "AED", minor })).toThrow();
@@ -92,10 +95,13 @@ describe("MoneyDto", () => {
 
 describe("commodity and valuation DTOs", () => {
   it("accepts bounded commodity scale and rejects unknown fields", () => {
-    expect(CommodityDtoSchema.parse({ code: "BTC", scale: 8 })).toEqual({
+    const commodity = CommodityDtoSchema.parse({ code: "BTC", scale: 8 });
+
+    expect(commodity).toEqual({
       code: "BTC",
       scale: 8,
     });
+    expect(Object.isFrozen(commodity)).toBe(true);
     expect(() =>
       CommodityDtoSchema.parse({ code: "BTC", scale: 19 }),
     ).toThrow();
@@ -104,21 +110,23 @@ describe("commodity and valuation DTOs", () => {
     ).toThrow();
   });
 
-  it("normalizes valuations and keeps quote IDs immutable at the type boundary", () => {
+  it("normalizes and freezes valuations and their quote IDs", () => {
     const quoteId = "018f4f7e-8ead-7c0d-8000-000000000002";
-    expect(
-      ValuationDtoSchema.parse({
-        currency: "usd",
-        minor: "125000",
-        quoteIds: [quoteId],
-        asOf: "2026-08-04",
-      }),
-    ).toEqual({
+    const valuation = ValuationDtoSchema.parse({
+      currency: "usd",
+      minor: "125000",
+      quoteIds: [quoteId],
+      asOf: "2026-08-04",
+    });
+
+    expect(valuation).toEqual({
       currency: "USD",
       minor: "125000",
       quoteIds: [quoteId],
       asOf: "2026-08-04",
     });
+    expect(Object.isFrozen(valuation)).toBe(true);
+    expect(Object.isFrozen(valuation.quoteIds)).toBe(true);
     expect(() =>
       ValuationDtoSchema.parse({
         currency: "USD",

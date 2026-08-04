@@ -13,7 +13,7 @@ export const CurrencySchema = z
 
 export const MinorUnitStringSchema = z
   .string()
-  .regex(/^-?(0|[1-9]\d*)$/)
+  .regex(/^(?:0|-?[1-9]\d*)$/)
   .transform((value) => value as MinorUnitString);
 
 export const MoneyDtoSchema = z
@@ -21,7 +21,8 @@ export const MoneyDtoSchema = z
     currency: CurrencySchema,
     minor: MinorUnitStringSchema,
   })
-  .strict();
+  .strict()
+  .readonly();
 
 export type MoneyDto = z.infer<typeof MoneyDtoSchema>;
 
@@ -30,7 +31,8 @@ export const CommodityDtoSchema = z
     code: z.string().min(1),
     scale: z.number().int().min(0).max(18),
   })
-  .strict();
+  .strict()
+  .readonly();
 
 export type CommodityDto = z.infer<typeof CommodityDtoSchema>;
 
@@ -41,7 +43,8 @@ export const ValuationDtoSchema = z
     quoteIds: z.array(z.string().uuid()).readonly(),
     asOf: IsoDateSchema,
   })
-  .strict();
+  .strict()
+  .readonly();
 
 export type ValuationDto = z.infer<typeof ValuationDtoSchema>;
 
