@@ -42,4 +42,19 @@ describe("registerCommandHandlers", () => {
 
     await expect(registered.get("app:get-info")?.({}, {})).rejects.toThrow();
   });
+
+  it("rolls back earlier registrations when a later handle fails", () => {
+    const removeHandler = vi.fn();
+    const handle = vi.fn().mockImplementation((channel: string) => {
+      if (channel === "task:start") throw new Error("registration failed");
+    });
+    const handlers = {
+      "app:get-info": () => ({ name: "Personal Wealth" as const, version: "0.1.0", platform: "darwin" as const }),
+      "task:start": () => ({ taskId: "018f4f7e-8ead-7c0d-8000-000000000103" as never }),
+      "task:cancel": () => ({ cancelled: false }),
+    };
+
+    expect(() => registerCommandHandlers({ handle, removeHandler } as never, handlers)).toThrow("registration failed");
+    expect(removeHandler).toHaveBeenCalledWith("app:get-info");
+  });
 });

@@ -79,7 +79,7 @@ describe("createUtilityPort", () => {
     const unsubscribe = utility.onMessage(vi.fn());
     unsubscribe();
 
-    expect(mainPort.off).toHaveBeenCalledWith("message", expect.any(Function));
+    expect(mainPort.off).not.toHaveBeenCalledWith("message", expect.any(Function));
   });
 
   it("fails sends and notifies subscribers when the child exits", () => {
@@ -100,5 +100,21 @@ describe("createUtilityPort", () => {
     expect(mainPort.close).toHaveBeenCalledOnce();
     expect(child.off).toHaveBeenCalledWith("exit", expect.any(Function));
     expect(child.off).toHaveBeenCalledWith("error", expect.any(Function));
+  });
+
+  it("fails sends and notifies subscribers when the MessagePort closes", () => {
+    const mainPort = createPort();
+    const workerPort = createPort();
+    const child = createChild();
+    messageChannelMain.mockReturnValue({ port1: mainPort, port2: workerPort });
+    const utility = createUtilityPort(child as never);
+    const disconnected = vi.fn();
+    utility.onDisconnect?.(disconnected);
+
+    mainPort.emit("close");
+
+    expect(disconnected).toHaveBeenCalledOnce();
+    expect(() => utility.postMessage({ type: "cancel", taskId: "018f4f7e-8ead-7c0d-8000-000000000203" as never })).toThrow();
+    expect(mainPort.off).toHaveBeenCalledWith("close", expect.any(Function));
   });
 });

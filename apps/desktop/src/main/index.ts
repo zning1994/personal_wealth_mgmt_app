@@ -10,15 +10,31 @@ import { createMainWindow } from "./window";
 
 const RENDERER_URL = "app://personal-wealth/index.html";
 const APPLICATION_ORIGIN = "app://personal-wealth";
+const UTILITY_READY_TIMEOUT_MS = 5_000;
 
 let startup: Promise<void> | undefined;
 
 function desktopPlatform(): "darwin" | "win32" {
-  return process.platform === "win32" ? "win32" : "darwin";
+  if (process.platform === "darwin" || process.platform === "win32") return process.platform;
+  throw new Error("Unsupported desktop platform");
 }
 
 function bundledPath(...segments: string[]): string {
   return join(app.getAppPath(), "dist", ...segments);
+}
+
+async function awaitUtilityReady(port: ManagedUtilityPort): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      port.ready(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Utility process readiness timed out")), UTILITY_READY_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 function disposeDesktop(
@@ -26,6 +42,7 @@ function disposeDesktop(
   port: ManagedUtilityPort | undefined,
   unregisterHandlers: (() => void) | undefined,
   child: UtilityProcess | undefined,
+  mainWindow: BrowserWindow | undefined,
 ): void {
   unregisterHandlers?.();
   coordinator?.dispose();
@@ -35,6 +52,7 @@ function disposeDesktop(
   } catch {
     // UtilityProcess cleanup must not prevent the remaining shutdown operations.
   }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
 }
 
 async function start(): Promise<void> {
@@ -50,18 +68,19 @@ async function start(): Promise<void> {
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    disposeDesktop(coordinator, port, unregisterHandlers, child);
+    disposeDesktop(coordinator, port, unregisterHandlers, child, mainWindow);
   };
 
   try {
     child = utilityProcess.fork(bundledPath("worker", "index.js"));
     port = createUtilityPort(child);
+    await awaitUtilityReady(port);
     coordinator = new TaskCoordinator(port, (progress) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       mainWindow.webContents.send("task:progress", progress);
     });
     const handlers: CommandHandlers = {
-      "app:get-info": () => ({ name: "Personal Wealth", version: "0.1.0", platform: desktopPlatform() }),
+      "app:get-info": () => ({ name: "Personal Wealth", version: app.getVersion(), platform: desktopPlatform() }),
       "task:start": (input) => coordinator?.start(input) ?? Promise.reject(new Error("Task coordinator unavailable")),
       "task:cancel": (input) => coordinator?.cancel(input) ?? { cancelled: false },
     };

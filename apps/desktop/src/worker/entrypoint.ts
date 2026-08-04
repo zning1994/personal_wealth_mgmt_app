@@ -1,6 +1,7 @@
 import { attachUtilityWorkerPort, type UtilityWorkerPort } from "./task-runtime";
 
 export const INVALID_WORKER_MESSAGE_DIAGNOSTIC = "invalid-worker-message";
+export const UTILITY_READY_MESSAGE = { type: "pwm:utility-ready" } as const;
 
 export interface UtilityParentPort {
   once(event: "message", listener: (event: { ports: unknown[] }) => void): void;
@@ -37,7 +38,6 @@ export function attachTransferredUtilityWorker(parentPort: UtilityParentPort): v
   parentPort.once("message", (event) => {
     const port = event.ports[0];
     if (!isTransferredMessagePort(port)) throw new Error("Utility worker requires a transferred MessagePort");
-    port.start();
     attachProductionUtilityWorker({
       postMessage: (message) => port.postMessage(message),
       onMessage: (listener) => {
@@ -46,5 +46,7 @@ export function attachTransferredUtilityWorker(parentPort: UtilityParentPort): v
         return () => port.off("message", onMessage);
       },
     });
+    port.start();
+    port.postMessage(UTILITY_READY_MESSAGE);
   });
 }

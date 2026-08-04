@@ -17,17 +17,24 @@ export function registerCommandHandlers(
   handlers: CommandHandlers,
 ): () => void {
   const channels = Object.keys(commandSchemas) as DesktopCommand[];
-  for (const channel of channels) {
-    ipc.handle(channel, async (_event, value) => {
-      const input = parseCommandInput(channel, value);
-      return parseCommandOutput(channel, await handlers[channel](input as never));
-    });
+  const registered: DesktopCommand[] = [];
+  try {
+    for (const channel of channels) {
+      ipc.handle(channel, async (_event, value) => {
+        const input = parseCommandInput(channel, value);
+        return parseCommandOutput(channel, await handlers[channel](input as never));
+      });
+      registered.push(channel);
+    }
+  } catch (error) {
+    for (const channel of registered) ipc.removeHandler(channel);
+    throw error;
   }
 
   let disposed = false;
   return () => {
     if (disposed) return;
     disposed = true;
-    for (const channel of channels) ipc.removeHandler(channel);
+    for (const channel of registered) ipc.removeHandler(channel);
   };
 }

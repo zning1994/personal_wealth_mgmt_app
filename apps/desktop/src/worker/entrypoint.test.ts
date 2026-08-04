@@ -63,4 +63,23 @@ describe("production utility worker entrypoint", () => {
       result: { echo: "ok" },
     });
   });
+
+  it("attaches the worker listener before starting the transferred port and then announces readiness", () => {
+    let transferListener: ((event: { ports: unknown[] }) => void) | undefined;
+    const events: string[] = [];
+    const parentPort = { once: (_event: "message", listener: (event: { ports: unknown[] }) => void) => (transferListener = listener) };
+    const port = {
+      postMessage: (message: unknown) => events.push(JSON.stringify(message)),
+      on: () => events.push("listener"),
+      off: () => undefined,
+      start: () => events.push("start"),
+    };
+
+    attachTransferredUtilityWorker(parentPort);
+    transferListener?.({ ports: [port] });
+
+    expect(events[0]).toBe("listener");
+    expect(events[1]).toBe("start");
+    expect(events[2]).toBe(JSON.stringify({ type: "pwm:utility-ready" }));
+  });
 });

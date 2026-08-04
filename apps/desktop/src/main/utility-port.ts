@@ -3,11 +3,13 @@ import { WorkerRequestSchema, WorkerResponseSchema, type WorkerRequest } from "@
 import type { UtilityPort } from "./task-coordinator";
 
 export type ManagedUtilityPort = UtilityPort & {
+  ready(): Promise<void>;
   dispose(): void;
 };
 
 const UTILITY_PORT_TRANSFER = "pwm:utility-port";
 const TRANSPORT_UNAVAILABLE = "Utility process transport is unavailable";
+const UTILITY_READY = "pwm:utility-ready";
 
 export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
   const channel = new MessageChannelMain();
@@ -17,8 +19,21 @@ export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
   let available = true;
   let disposed = false;
   let messageListenerAttached = false;
+  let resolveReady: (() => void) | undefined;
+  let rejectReady: ((error: Error) => void) | undefined;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  void ready.catch(() => undefined);
 
   const onMessage = (event: ElectronMessageEvent) => {
+    if (event.data && typeof event.data === "object" && (event.data as { type?: unknown }).type === UTILITY_READY) {
+      resolveReady?.();
+      resolveReady = undefined;
+      rejectReady = undefined;
+      return;
+    }
     const response = WorkerResponseSchema.safeParse(event.data);
     if (!response.success) return;
     for (const listener of listeners) listener(response.data);
@@ -35,6 +50,8 @@ export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
     child.off("error", onChildUnavailable);
   };
 
+  const detachCloseListener = () => port.off("close", onPortClosed);
+
   const closePort = () => {
     try {
       port.close();
@@ -48,7 +65,10 @@ export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
     available = false;
     detachMessageListener();
     detachChildListeners();
+    detachCloseListener();
     closePort();
+    rejectReady?.(new Error(TRANSPORT_UNAVAILABLE));
+    rejectReady = undefined;
     for (const listener of disconnectListeners) listener();
   };
 
@@ -56,14 +76,22 @@ export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
     markUnavailable();
   }
 
+  function onPortClosed(): void {
+    markUnavailable();
+  }
+
   try {
     child.postMessage({ type: UTILITY_PORT_TRANSFER }, [channel.port2]);
     child.on("exit", onChildUnavailable);
     child.on("error", onChildUnavailable);
+    port.on("close", onPortClosed);
+    port.on("message", onMessage);
+    messageListenerAttached = true;
     port.start();
   } catch (error) {
     available = false;
     detachChildListeners();
+    detachCloseListener();
     closePort();
     throw error;
   }
@@ -73,19 +101,15 @@ export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
       if (!available || disposed) throw new Error(TRANSPORT_UNAVAILABLE);
       port.postMessage(WorkerRequestSchema.parse(message));
     },
+    ready: () => ready,
     onMessage(listener) {
       if (disposed) return () => undefined;
       listeners.add(listener);
-      if (!messageListenerAttached && available) {
-        port.on("message", onMessage);
-        messageListenerAttached = true;
-      }
       let subscribed = true;
       return () => {
         if (!subscribed) return;
         subscribed = false;
         listeners.delete(listener);
-        if (listeners.size === 0) detachMessageListener();
       };
     },
     onDisconnect(listener) {
@@ -106,7 +130,10 @@ export function createUtilityPort(child: UtilityProcess): ManagedUtilityPort {
       disconnectListeners.clear();
       detachMessageListener();
       detachChildListeners();
+      detachCloseListener();
       available = false;
+      rejectReady?.(new Error(TRANSPORT_UNAVAILABLE));
+      rejectReady = undefined;
       closePort();
     },
   };
