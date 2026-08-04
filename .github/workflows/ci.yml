@@ -58,6 +58,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: unsigned-desktop-${{ matrix.os }}-${{ github.run_id }}
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
           path: apps/desktop/release/**
