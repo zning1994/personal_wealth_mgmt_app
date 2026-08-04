@@ -13,6 +13,11 @@
     "assert:spike": "tsx scripts/assert-spike-report.ts"
   },
   "dependencies": {
+    "@node-rs/argon2": "2.0.2",
+    "@pwm/application": "workspace:*",
+    "@pwm/contracts": "workspace:*",
+    "@pwm/domain": "workspace:*",
+    "@pwm/fx": "workspace:*",
     "better-sqlite3-multiple-ciphers": "12.11.1"
   },
   "devDependencies": {

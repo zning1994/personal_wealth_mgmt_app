@@ -1,5 +1,6 @@
 import { app, ipcMain, session, utilityProcess } from "electron";
-import { basename, dirname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join, sep } from "node:path";
 import type { BrowserWindow, UtilityProcess } from "electron";
 import type { CommandHandlers } from "./ipc";
 import {
@@ -12,6 +13,17 @@ import { TaskCoordinator } from "./task-coordinator";
 import { createUtilityPort, type ManagedUtilityPort } from "./utility-port";
 import { installWindowSecurity } from "./window-security";
 import { createMainWindow } from "./window";
+import { createLocalImportController } from "./import/in-memory-import-controller";
+import { registerImportIpc } from "./import/import-ipc";
+import { createLocalLlmSettingsService } from "./settings/llm-settings-service";
+import { registerLlmSettingsIpc } from "./settings/llm-settings-ipc";
+import { registerLlmAnalysisIpc } from "./settings/llm-analysis-ipc";
+import { registerAccountsIpc } from "./accounts-ipc";
+import { LocalPdfOcrPipeline } from "./import/ocr-pipeline";
+import { LocalPdfPageRenderer } from "./import/pdf-page-renderer";
+import { registerLedgerIpc } from "./ledger/ledger-ipc";
+import { registerFinanceIpc } from "./finance/finance-ipc";
+import { registerActivityIpc } from "./activity/activity-ipc";
 
 const UTILITY_READY_TIMEOUT_MS = 5_000;
 
@@ -38,6 +50,14 @@ function bundledPath(...segments: string[]): string {
   return join(outputRoot, ...segments);
 }
 
+function bundledWorkerPath(...segments: string[]): string {
+  const candidate = bundledPath(...segments);
+  const marker = `${sep}app.asar${sep}`;
+  if (!candidate.includes(marker)) return candidate;
+  const unpacked = candidate.replace(marker, `${sep}app.asar.unpacked${sep}`);
+  return existsSync(unpacked) ? unpacked : candidate;
+}
+
 async function awaitUtilityReady(port: ManagedUtilityPort): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -61,6 +81,7 @@ function disposeDesktop(
   unregisterHandlers: (() => void) | undefined,
   child: UtilityProcess | undefined,
   mainWindow: BrowserWindow | undefined,
+  closeWorkspace: (() => Promise<void>) | undefined,
 ): void {
   unregisterHandlers?.();
   coordinator?.dispose();
@@ -71,6 +92,7 @@ function disposeDesktop(
     // UtilityProcess cleanup must not prevent the remaining shutdown operations.
   }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+  void closeWorkspace?.();
 }
 
 async function start(token: object): Promise<void> {
@@ -84,6 +106,7 @@ async function start(token: object): Promise<void> {
   let coordinator: TaskCoordinator | undefined;
   let unregisterHandlers: (() => void) | undefined;
   let mainWindow: BrowserWindow | undefined;
+  let closeWorkspace: (() => Promise<void>) | undefined;
   let disposed = false;
   let beforeQuitAttached = false;
   let windowClosedAttached = false;
@@ -100,7 +123,7 @@ async function start(token: object): Promise<void> {
       mainWindow.off("closed", onWindowClosed);
       windowClosedAttached = false;
     }
-    disposeDesktop(coordinator, port, unregisterHandlers, child, mainWindow);
+    disposeDesktop(coordinator, port, unregisterHandlers, child, mainWindow, closeWorkspace);
     if (startup?.token === token) startup = undefined;
   };
 
@@ -124,7 +147,24 @@ async function start(token: object): Promise<void> {
       "task:cancel": (input) =>
         coordinator?.cancel(input) ?? { cancelled: false },
     };
-    unregisterHandlers = registerCommandHandlers(ipcMain, handlers);
+    const unregisterShellHandlers = registerCommandHandlers(ipcMain, handlers);
+    const ocrTempRoot = typeof app.getPath === "function" ? join(app.getPath("temp"), "personal-wealth-ocr") : undefined;
+    const pdfOcr = ocrTempRoot === undefined ? undefined : new LocalPdfOcrPipeline({
+      tempRoot: ocrTempRoot,
+      workerScript: bundledWorkerPath("ocr", "index.js"),
+      renderer: new LocalPdfPageRenderer({ rootDirectory: ocrTempRoot }),
+    });
+    const localImports = await (pdfOcr === undefined ? createLocalImportController() : createLocalImportController({ pdfOcr }));
+    closeWorkspace = localImports.close;
+    const unregisterImportHandlers = registerImportIpc(ipcMain, localImports.controller);
+    const unregisterAccountHandlers = registerAccountsIpc(ipcMain, localImports.accounts, await localImports.controller.getWorkspaceId());
+    const unregisterLedgerHandlers = registerLedgerIpc(ipcMain, localImports.ledger);
+    const unregisterFinanceHandlers = registerFinanceIpc(ipcMain, localImports.finance);
+    const unregisterActivityHandlers = registerActivityIpc(ipcMain, localImports.activity, await localImports.controller.getWorkspaceId());
+    const llmSettings = createLocalLlmSettingsService();
+    const unregisterLlmHandlers = llmSettings ? registerLlmSettingsIpc(ipcMain, llmSettings) : () => undefined;
+    const unregisterLlmAnalysisHandlers = llmSettings ? registerLlmAnalysisIpc(ipcMain, llmSettings) : () => undefined;
+    unregisterHandlers = () => { unregisterShellHandlers(); unregisterImportHandlers(); unregisterAccountHandlers(); unregisterLedgerHandlers(); unregisterFinanceHandlers(); unregisterActivityHandlers(); unregisterLlmHandlers(); unregisterLlmAnalysisHandlers(); };
     mainWindow = await createMainWindow({
       preloadPath: bundledPath("preload", "index.js"),
       rendererUrl: APPLICATION_ENTRY_URL,

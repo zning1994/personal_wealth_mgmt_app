@@ -94,7 +94,6 @@ function windowDouble() {
 }
 
 async function loadStartDesktop() {
-  // @ts-expect-error Vitest executes this isolated ESM module despite the workspace's script module target.
   return (await import("./index")).startDesktop;
 }
 

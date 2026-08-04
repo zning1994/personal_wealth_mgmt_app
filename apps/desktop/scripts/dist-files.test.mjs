@@ -35,6 +35,7 @@ function validDistribution(options = {}) {
     "out/main/index.js": "console.log('main')",
     "out/preload/index.js": "console.log('preload')",
     "out/worker/index.js": "console.log('worker')",
+    "out/ocr/index.js": "console.log('ocr')",
     "out/renderer/index.html": `<meta http-equiv="Content-Security-Policy" content="${requiredContentSecurityPolicy}">`,
     "out/renderer/assets/app.js": "console.log('renderer')",
   };
@@ -65,6 +66,13 @@ describe("distribution assertions", () => {
     const root = validDistribution({ omit: ["out/worker/index.js"] });
     await expect(assertDistribution(root)).rejects.toThrow(
       "Missing required desktop artifact: out/worker/index.js",
+    );
+  });
+
+  it("rejects a missing OCR worker artifact", async () => {
+    const root = validDistribution({ omit: ["out/ocr/index.js"] });
+    await expect(assertDistribution(root)).rejects.toThrow(
+      "Missing required desktop artifact: out/ocr/index.js",
     );
   });
 

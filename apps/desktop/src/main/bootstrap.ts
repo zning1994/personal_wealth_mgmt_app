@@ -8,9 +8,10 @@ registerApplicationProtocolScheme();
 let pendingLaunch: Promise<void> | undefined;
 let fatalHandled = false;
 
-function handleFatalLaunch(): void {
+function handleFatalLaunch(error?: unknown): void {
   if (fatalHandled) return;
   fatalHandled = true;
+  if (process.env.PWM_DEBUG_STARTUP === "1") console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   console.error("Desktop startup failed: STARTUP_FAILED");
   app.exit(1);
 }
@@ -20,8 +21,8 @@ function launchDesktop(): void {
   let launch: Promise<void>;
   try {
     launch = startDesktop();
-  } catch {
-    handleFatalLaunch();
+  } catch (error: unknown) {
+    handleFatalLaunch(error);
     return;
   }
   pendingLaunch = launch;
@@ -29,9 +30,9 @@ function launchDesktop(): void {
     () => {
       if (pendingLaunch === launch) pendingLaunch = undefined;
     },
-    () => {
+    (error: unknown) => {
       if (pendingLaunch === launch) pendingLaunch = undefined;
-      handleFatalLaunch();
+      handleFatalLaunch(error);
     },
   );
 }

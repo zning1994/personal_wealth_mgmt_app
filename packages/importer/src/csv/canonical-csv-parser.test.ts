@@ -5,7 +5,7 @@ import { selectParser } from "../plugins/parser-plugin.js";
 
 describe("CanonicalCsvParser", () => {
   it("parses integer minor units and bilingual descriptions", async () => {
-    const bytes = await readFile("packages/importer/test/fixtures/golden/canonical-zh-en.csv");
+    const bytes = await readFile(new URL("../../test/fixtures/golden/canonical-zh-en.csv", import.meta.url));
     const parser = new CanonicalCsvParser();
     const result = await parser.parse({ sourceDocumentId: crypto.randomUUID(), mimeType: "text/csv", extension: ".csv", prefix: bytes.subarray(0, 64), bytes, signal: new AbortController().signal });
     expect(result.candidates.map((item) => item.amountMinor.value)).toEqual(["-1299", "10000"]);

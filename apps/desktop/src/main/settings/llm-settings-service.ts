@@ -1,0 +1,21 @@
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { app, safeStorage } from "electron";
+import { LlmSettingsViewSchema, SetLlmProviderInputSchema, type LlmProviderDto, type LlmSettingsView, type SetLlmProviderInput } from "@pwm/contracts";
+import { createLlmClient, resolveLlmEndpoint, type LlmClient } from "@pwm/ai";
+import { EncryptedLlmSecretStore } from "./llm-secret-store";
+
+type StoredProvider = { provider: LlmProviderDto; model: string; endpoint?: string; enabled: boolean; secretRef?: string };
+type SettingsFile = { version: 1; providers: StoredProvider[] };
+
+export class LlmSettingsService {
+  constructor(private readonly path: string, private readonly secrets: EncryptedLlmSecretStore) {}
+  async get(): Promise<LlmSettingsView> { const file = await this.read(); const providers = await Promise.all(file.providers.map(async (provider) => ({ provider: provider.provider, model: provider.model, ...(provider.endpoint ? { endpoint: provider.endpoint } : {}), enabled: provider.enabled, secretConfigured: provider.secretRef ? await this.secrets.get(provider.secretRef).then((value) => value !== null) : false }))); return LlmSettingsViewSchema.parse({ providers }); }
+  async set(input: SetLlmProviderInput): Promise<LlmSettingsView> { const parsed = SetLlmProviderInputSchema.parse(input); const file = await this.read(); const secretRef = `llm:${parsed.provider}`; if (parsed.apiKey) await this.secrets.set(secretRef, parsed.apiKey); if (parsed.clearApiKey) await this.secrets.delete(secretRef); const provider: StoredProvider = { provider: parsed.provider, model: parsed.model, ...(parsed.endpoint ? { endpoint: parsed.endpoint } : {}), enabled: parsed.enabled, ...(parsed.provider === "ollama" ? {} : { secretRef }) }; const index = file.providers.findIndex((item) => item.provider === parsed.provider); if (index === -1) file.providers.push(provider); else file.providers[index] = provider; await this.write(file); return this.get(); }
+  async delete(provider: LlmProviderDto): Promise<LlmSettingsView> { const file = await this.read(); const existing = file.providers.find((item) => item.provider === provider); if (existing?.secretRef) await this.secrets.delete(existing.secretRef); file.providers = file.providers.filter((item) => item.provider !== provider); await this.write(file); return this.get(); }
+  async client(provider: LlmProviderDto): Promise<{ client: LlmClient; providerName: string; baseUrl: string; model: string }> { const file = await this.read(); const stored = file.providers.find((item) => item.provider === provider); if (!stored || !stored.enabled) throw new Error("LLM_PROVIDER_NOT_CONFIGURED"); const endpoint = resolveLlmEndpoint({ provider: stored.provider, ...(stored.endpoint ? { endpoint: stored.endpoint } : {}) }); const client = createLlmClient({ provider: stored.provider, model: stored.model, ...(stored.endpoint ? { endpoint: stored.endpoint } : {}), enabled: stored.enabled, ...(stored.secretRef ? { secretRef: stored.secretRef } : {}) }, this.secrets); return { client, providerName: stored.provider, baseUrl: endpoint, model: stored.model }; }
+  private async read(): Promise<SettingsFile> { try { const parsed = JSON.parse(await readFile(this.path, "utf8")) as SettingsFile; if (parsed.version !== 1 || !Array.isArray(parsed.providers)) throw new Error("LLM_SETTINGS_FILE_INVALID"); return { version: 1, providers: parsed.providers.map((item) => ({ ...item })) }; } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, providers: [] }; throw error; } }
+  private async write(file: SettingsFile): Promise<void> { await mkdir(dirname(this.path), { recursive: true, mode: 0o700 }); const temporary = `${this.path}.partial`; await writeFile(temporary, JSON.stringify(file), { encoding: "utf8", mode: 0o600 }); await rename(temporary, this.path); await chmod(this.path, 0o600); }
+}
+
+export function createLocalLlmSettingsService(): LlmSettingsService | null { if (typeof app.getPath !== "function" || !safeStorage) return null; const root = join(app.getPath("userData"), "workspace"); return new LlmSettingsService(join(root, "llm-settings.json"), new EncryptedLlmSecretStore(join(root, "llm-secrets.json"), safeStorage)); }

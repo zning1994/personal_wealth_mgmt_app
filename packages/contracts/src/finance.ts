@@ -2,6 +2,11 @@ import { z } from "zod";
 import { AccountIdSchema, IsoDateSchema, WorkspaceIdSchema } from "./ids";
 import { CurrencySchema, MinorUnitStringSchema } from "./money";
 
+const PositiveMinorUnitStringSchema = z
+  .string()
+  .regex(/^[1-9]\d*$/)
+  .transform((value) => value as z.infer<typeof MinorUnitStringSchema>);
+
 export const FxRateFieldSchema = z.enum(["spot_buy", "cash_buy", "spot_sell", "cash_sell", "conversion"]);
 export type FxRateField = z.infer<typeof FxRateFieldSchema>;
 
@@ -15,7 +20,7 @@ export type FxQuoteDto = z.infer<typeof FxQuoteDtoSchema>;
 
 export const FxOverrideDtoSchema = z.object({
   id: z.string().uuid(), workspaceId: WorkspaceIdSchema, from: CurrencySchema, to: CurrencySchema,
-  numerator: MinorUnitStringSchema, denominator: MinorUnitStringSchema, asOf: IsoDateSchema,
+  numerator: MinorUnitStringSchema, denominator: PositiveMinorUnitStringSchema, asOf: IsoDateSchema,
   deletedAt: z.string().datetime().nullable(),
 }).strict();
 export type FxOverrideDto = z.infer<typeof FxOverrideDtoSchema>;

@@ -16,7 +16,6 @@ describe("production bootstrap failure", () => {
     vi.doMock("./app-protocol", () => ({ registerApplicationProtocolScheme }));
     vi.doMock("electron", () => ({ app }));
 
-    // @ts-expect-error Vitest executes this isolated ESM module despite the workspace's script module target.
     await import("./bootstrap");
     const activate = app.on.mock.calls.find(([event]) => event === "activate")?.[1] as (() => void) | undefined;
     activate?.();

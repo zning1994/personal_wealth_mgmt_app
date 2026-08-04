@@ -4,3 +4,6 @@ export * from "./normalize/normalize-candidate";
 export * from "./ocr/ocr-runner";
 export * from "./plugins/parser-plugin";
 export * from "./reconcile/reconcile-statement";
+export * from "./excel/saved-values-parser";
+export * from "./pdf/safe-pdf-text-extractor";
+export * from "./pdf/pdf-page-renderer";

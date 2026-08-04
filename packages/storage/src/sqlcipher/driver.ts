@@ -18,6 +18,8 @@ export interface SqlCipherConnection {
     params?: readonly unknown[],
   ): Promise<readonly T[]>;
   transaction<T>(work: () => Promise<T>): Promise<T>;
+  /** Re-key an open writable database without exposing the native handle. */
+  rekey?(key: Uint8Array): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -62,6 +64,11 @@ function adaptNativeDatabase(database: NativeDatabase): SqlCipherConnection {
         }
         throw error;
       }
+    },
+    rekey: async (key) => {
+      if (key.byteLength !== 32) throw new Error("invalid-sqlcipher-key-length");
+      database.pragma(`rekey="x'${Buffer.from(key).toString("hex")}'"`);
+      database.prepare("SELECT count(*) AS count FROM sqlite_master").get();
     },
     close: () => {
       closing ??= Promise.resolve().then(() => {

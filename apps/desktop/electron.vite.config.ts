@@ -14,8 +14,9 @@ export default defineConfig({
         input: {
           "main/index": fromDesktopRoot("src/main/bootstrap.ts"),
           "worker/index": fromDesktopRoot("src/worker/index.ts"),
+          "ocr/index": fromDesktopRoot("src/workers/ocr.worker.ts"),
         },
-        external: ["electron", "original-fs", /^electron\//, /\.node$/],
+        external: ["electron", "original-fs", "better-sqlite3-multiple-ciphers", "@node-rs/argon2", /^electron\//, /\.node$/],
         output: {
           entryFileNames: "[name].js",
           chunkFileNames: "chunks/[name]-[hash].js",

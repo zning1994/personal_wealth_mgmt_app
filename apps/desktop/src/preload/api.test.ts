@@ -14,7 +14,7 @@ describe("createDesktopApi", () => {
       platform: "darwin",
     });
     expect(invoke).toHaveBeenCalledWith("app:get-info", {});
-    expect(Object.keys(api)).toEqual(["getAppInfo", "startTask", "cancelTask", "onTaskProgress"]);
+    expect(Object.keys(api)).toEqual(["getAppInfo", "startTask", "cancelTask", "onTaskProgress", "imports", "llm", "accounts", "ledger", "finance", "activity"]);
     expect(Object.isFrozen(api)).toBe(true);
   });
 

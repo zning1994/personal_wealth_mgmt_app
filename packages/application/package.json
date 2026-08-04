@@ -7,10 +7,12 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src test"
+    "lint": "eslint src"
   },
   "dependencies": {
     "@pwm/contracts": "workspace:*",
-    "@pwm/domain": "workspace:*"
+    "@pwm/domain": "workspace:*",
+    "@pwm/ai": "workspace:*",
+    "@pwm/fx": "workspace:*"
   }
 }

@@ -5,6 +5,7 @@ const requiredArtifacts = [
   "out/main/index.js",
   "out/preload/index.js",
   "out/worker/index.js",
+  "out/ocr/index.js",
   "out/renderer/index.html",
 ];
 const forbiddenRendererLiterals = ["node:fs", "ipcRenderer", "child_process"];
