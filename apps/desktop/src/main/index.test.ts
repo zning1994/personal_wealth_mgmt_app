@@ -8,6 +8,7 @@ const {
   createMainWindow,
   installWindowSecurity,
   createUtilityPort,
+  installApplicationProtocol,
   registerCommandHandlers,
   taskCoordinator,
   coordinators,
@@ -18,13 +19,20 @@ const {
     dispose: ReturnType<typeof vi.fn>;
   }> = [];
   return {
-    app: { getAppPath: vi.fn(), getVersion: vi.fn(), whenReady: vi.fn(), once: vi.fn() },
+    app: {
+      getAppPath: vi.fn(),
+      getVersion: vi.fn(),
+      whenReady: vi.fn(),
+      once: vi.fn(),
+      setAppUserModelId: vi.fn(),
+    },
     ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
     session: { defaultSession: {} },
     utilityProcess: { fork: vi.fn() },
     createMainWindow: vi.fn(),
     installWindowSecurity: vi.fn(),
     createUtilityPort: vi.fn(),
+    installApplicationProtocol: vi.fn(),
     registerCommandHandlers: vi.fn(),
     taskCoordinator: vi.fn(() => {
       const coordinator = { start: vi.fn(), cancel: vi.fn(), dispose: vi.fn() };
@@ -39,6 +47,12 @@ vi.mock("electron", () => ({ app, ipcMain, session, utilityProcess }));
 vi.mock("./window", () => ({ createMainWindow }));
 vi.mock("./window-security", () => ({ installWindowSecurity }));
 vi.mock("./utility-port", () => ({ createUtilityPort }));
+vi.mock("./app-protocol", () => ({
+  APPLICATION_ENTRY_URL: "app://desktop/index.html",
+  APPLICATION_ORIGIN: "app://desktop",
+  installApplicationProtocol,
+  isApplicationAssetFileUrl: vi.fn(() => true),
+}));
 vi.mock("./ipc", () => ({ registerCommandHandlers }));
 vi.mock("./task-coordinator", () => ({ TaskCoordinator: taskCoordinator }));
 
@@ -67,7 +81,9 @@ async function loadStartDesktop() {
 }
 
 function beforeQuitCallback(): () => void {
-  const callback = app.once.mock.calls.find(([event]) => event === "before-quit")?.[1] as (() => void) | undefined;
+  const callback = app.once.mock.calls.find(
+    ([event]) => event === "before-quit",
+  )?.[1] as (() => void) | undefined;
   expect(callback).toBeTypeOf("function");
   return callback as () => void;
 }
@@ -121,6 +137,66 @@ describe("startDesktop", () => {
     expect(ordering).toEqual(["security", "fork", "window"]);
   });
 
+  it("installs the fixed app identity, protocol root, and bundled runtime paths", async () => {
+    const startDesktop = await loadStartDesktop();
+
+    await startDesktop();
+
+    expect(app.setAppUserModelId).toHaveBeenCalledWith(
+      "com.personalwealth.desktop",
+    );
+    expect(installApplicationProtocol).toHaveBeenCalledWith(
+      "/app/out/renderer",
+    );
+    expect(utilityProcess.fork).toHaveBeenCalledWith(
+      "/app/out/worker/index.js",
+    );
+    expect(createMainWindow).toHaveBeenCalledWith({
+      preloadPath: "/app/out/preload/index.js",
+      rendererUrl: "app://desktop/index.html",
+    });
+  });
+
+  it("resolves sibling output entries when Electron launches the built main file directly", async () => {
+    app.getAppPath.mockReturnValue("/app/out/main");
+    const startDesktop = await loadStartDesktop();
+
+    await startDesktop();
+
+    expect(installApplicationProtocol).toHaveBeenCalledWith(
+      "/app/out/renderer",
+    );
+    expect(utilityProcess.fork).toHaveBeenCalledWith(
+      "/app/out/worker/index.js",
+    );
+    expect(createMainWindow).toHaveBeenCalledWith({
+      preloadPath: "/app/out/preload/index.js",
+      rendererUrl: "app://desktop/index.html",
+    });
+  });
+
+  it("resolves bundled entries inside an asar package", async () => {
+    app.getAppPath.mockReturnValue(
+      "/Applications/Personal Wealth.app/Contents/Resources/app.asar",
+    );
+    const startDesktop = await loadStartDesktop();
+
+    await startDesktop();
+
+    const asarRoot =
+      "/Applications/Personal Wealth.app/Contents/Resources/app.asar/out";
+    expect(installApplicationProtocol).toHaveBeenCalledWith(
+      `${asarRoot}/renderer`,
+    );
+    expect(utilityProcess.fork).toHaveBeenCalledWith(
+      `${asarRoot}/worker/index.js`,
+    );
+    expect(createMainWindow).toHaveBeenCalledWith({
+      preloadPath: `${asarRoot}/preload/index.js`,
+      rendererUrl: "app://desktop/index.html",
+    });
+  });
+
   it("times out at 5000ms, clears resources and timers, and never creates downstream state", async () => {
     vi.useFakeTimers();
     try {
@@ -128,12 +204,18 @@ describe("startDesktop", () => {
       const port = portDouble(new Promise<void>(() => undefined));
       const retryChild = childDouble();
       const retryPort = portDouble();
-      utilityProcess.fork.mockReturnValueOnce(child).mockReturnValueOnce(retryChild);
-      createUtilityPort.mockReturnValueOnce(port).mockReturnValueOnce(retryPort);
+      utilityProcess.fork
+        .mockReturnValueOnce(child)
+        .mockReturnValueOnce(retryChild);
+      createUtilityPort
+        .mockReturnValueOnce(port)
+        .mockReturnValueOnce(retryPort);
       const startDesktop = await loadStartDesktop();
 
       const starting = startDesktop();
-      const rejected = expect(starting).rejects.toThrow("Utility process readiness timed out");
+      const rejected = expect(starting).rejects.toThrow(
+        "Utility process readiness timed out",
+      );
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(4_999);
       expect(child.kill).not.toHaveBeenCalled();
@@ -171,12 +253,18 @@ describe("startDesktop", () => {
     const failedPort = portDouble(failedReady);
     const healthyChild = childDouble();
     const healthyPort = portDouble();
-    utilityProcess.fork.mockReturnValueOnce(failedChild).mockReturnValueOnce(healthyChild);
-    createUtilityPort.mockReturnValueOnce(failedPort).mockReturnValueOnce(healthyPort);
+    utilityProcess.fork
+      .mockReturnValueOnce(failedChild)
+      .mockReturnValueOnce(healthyChild);
+    createUtilityPort
+      .mockReturnValueOnce(failedPort)
+      .mockReturnValueOnce(healthyPort);
     const startDesktop = await loadStartDesktop();
 
     const firstStart = startDesktop();
-    const rejected = expect(firstStart).rejects.toThrow("Utility process transport is unavailable");
+    const rejected = expect(firstStart).rejects.toThrow(
+      "Utility process transport is unavailable",
+    );
     rejectReady?.(new Error("Utility process transport is unavailable"));
     await rejected;
     expect(failedPort.dispose).toHaveBeenCalledOnce();
@@ -200,8 +288,12 @@ describe("startDesktop", () => {
     const successfulChild = childDouble();
     const successfulPort = portDouble();
     const successfulUnregister = vi.fn();
-    utilityProcess.fork.mockReturnValueOnce(failedChild).mockReturnValueOnce(successfulChild);
-    createUtilityPort.mockReturnValueOnce(failedPort).mockReturnValueOnce(successfulPort);
+    utilityProcess.fork
+      .mockReturnValueOnce(failedChild)
+      .mockReturnValueOnce(successfulChild);
+    createUtilityPort
+      .mockReturnValueOnce(failedPort)
+      .mockReturnValueOnce(successfulPort);
     registerCommandHandlers
       .mockImplementationOnce(() => {
         throw new Error("registration failed");
@@ -229,9 +321,15 @@ describe("startDesktop", () => {
     const successfulPort = portDouble();
     const failedUnregister = vi.fn();
     const successfulUnregister = vi.fn();
-    utilityProcess.fork.mockReturnValueOnce(failedChild).mockReturnValueOnce(successfulChild);
-    createUtilityPort.mockReturnValueOnce(failedPort).mockReturnValueOnce(successfulPort);
-    registerCommandHandlers.mockReturnValueOnce(failedUnregister).mockReturnValueOnce(successfulUnregister);
+    utilityProcess.fork
+      .mockReturnValueOnce(failedChild)
+      .mockReturnValueOnce(successfulChild);
+    createUtilityPort
+      .mockReturnValueOnce(failedPort)
+      .mockReturnValueOnce(successfulPort);
+    registerCommandHandlers
+      .mockReturnValueOnce(failedUnregister)
+      .mockReturnValueOnce(successfulUnregister);
     createMainWindow.mockImplementationOnce(() => {
       throw new Error("window failed");
     });
@@ -280,7 +378,8 @@ describe("startDesktop", () => {
     createMainWindow.mockReturnValue(mainWindow);
     const startDesktop = await loadStartDesktop();
     await startDesktop();
-    const publish = (taskCoordinator.mock.calls as unknown[][])[0]?.[1] as ((progress: unknown) => void) | undefined;
+    const publish = (taskCoordinator.mock.calls as unknown[][])[0]?.[1] as
+      ((progress: unknown) => void) | undefined;
     const progress = {
       taskId: "018f4f7e-8ead-7c0d-8000-000000000301",
       phase: "running",
@@ -290,7 +389,10 @@ describe("startDesktop", () => {
 
     publish?.(progress);
     expect(mainWindow.webContents.send).toHaveBeenCalledOnce();
-    expect(mainWindow.webContents.send).toHaveBeenCalledWith("task:progress", progress);
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+      "task:progress",
+      progress,
+    );
 
     mainWindow.destroy();
     publish?.(progress);

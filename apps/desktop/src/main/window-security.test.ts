@@ -19,13 +19,25 @@ describe("window security", () => {
   });
 
   it("allows only the exact application origin", () => {
-    expect(isAllowedApplicationUrl("app://desktop/index.html", "app://desktop")).toBe(true);
-    expect(isAllowedApplicationUrl("app://desktop.evil/index.html", "app://desktop")).toBe(false);
-    expect(isAllowedApplicationUrl("https://desktop/index.html", "https://desktop")).toBe(false);
-    expect(isAllowedApplicationUrl("https://example.com", "app://desktop")).toBe(false);
-    expect(isAllowedApplicationUrl("file:///tmp/statement.pdf", "app://desktop")).toBe(false);
+    expect(
+      isAllowedApplicationUrl("app://desktop/index.html", "app://desktop"),
+    ).toBe(true);
+    expect(
+      isAllowedApplicationUrl("app://desktop.evil/index.html", "app://desktop"),
+    ).toBe(false);
+    expect(
+      isAllowedApplicationUrl("https://desktop/index.html", "https://desktop"),
+    ).toBe(false);
+    expect(
+      isAllowedApplicationUrl("https://example.com", "app://desktop"),
+    ).toBe(false);
+    expect(
+      isAllowedApplicationUrl("file:///tmp/statement.pdf", "app://desktop"),
+    ).toBe(false);
     expect(isAllowedApplicationUrl("not a URL", "app://desktop")).toBe(false);
-    expect(isAllowedApplicationUrl("app://desktop/index.html", "not a URL")).toBe(false);
+    expect(
+      isAllowedApplicationUrl("app://desktop/index.html", "not a URL"),
+    ).toBe(false);
   });
 
   it("denies permissions and external network requests", () => {
@@ -46,15 +58,59 @@ describe("window security", () => {
     const permissionCallback = vi.fn();
     const networkCallback = vi.fn();
 
-    requestHandler?.({} as never, "notifications", permissionCallback, {} as never);
+    requestHandler?.(
+      {} as never,
+      "notifications",
+      permissionCallback,
+      {} as never,
+    );
     expect(permissionCallback).toHaveBeenCalledWith(false);
-    expect(checkHandler?.({} as never, "notifications", "https://example.com", {} as never)).toBe(false);
+    expect(
+      checkHandler?.(
+        {} as never,
+        "notifications",
+        "https://example.com",
+        {} as never,
+      ),
+    ).toBe(false);
     expect(onBeforeRequest).toHaveBeenCalledWith(
       { urls: ["http://*/*", "https://*/*", "file://*/*"] },
       expect.any(Function),
     );
     networkHandler?.({} as never, networkCallback);
     expect(networkCallback).toHaveBeenCalledWith({ cancel: true });
+  });
+
+  it("allows only file requests explicitly identified as internal renderer assets", () => {
+    const onBeforeRequest = vi.fn();
+    const targetSession = {
+      setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
+      webRequest: { onBeforeRequest },
+    };
+    const isInternalAsset = vi.fn(
+      (url: string) => url === "file:///app/out/renderer/index.html",
+    );
+
+    installWindowSecurity(
+      targetSession as never,
+      "app://desktop",
+      isInternalAsset,
+    );
+
+    const networkHandler = onBeforeRequest.mock.calls[0]?.[1];
+    const internalCallback = vi.fn();
+    const externalCallback = vi.fn();
+    networkHandler?.(
+      { url: "file:///app/out/renderer/index.html" } as never,
+      internalCallback,
+    );
+    networkHandler?.(
+      { url: "file:///private/statement.pdf" } as never,
+      externalCallback,
+    );
+    expect(internalCallback).toHaveBeenCalledWith({ cancel: false });
+    expect(externalCallback).toHaveBeenCalledWith({ cancel: true });
   });
 
   it("installs each session policy only once", () => {
@@ -86,6 +142,8 @@ describe("window security", () => {
     const preventDefault = vi.fn();
     navigationHandler?.({ preventDefault } as never, "https://example.com");
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(setWindowOpenHandler.mock.calls[0]?.[0]({})).toEqual({ action: "deny" });
+    expect(setWindowOpenHandler.mock.calls[0]?.[0]({})).toEqual({
+      action: "deny",
+    });
   });
 });

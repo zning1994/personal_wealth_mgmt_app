@@ -6,8 +6,12 @@ describe("production bootstrap failure", () => {
     const failure = new Error("account=secret-path");
     const startDesktop = vi.fn().mockRejectedValue(failure);
     const app = { exit: vi.fn() };
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const registerApplicationProtocolScheme = vi.fn();
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     vi.doMock("./index", () => ({ startDesktop }));
+    vi.doMock("./app-protocol", () => ({ registerApplicationProtocolScheme }));
     vi.doMock("electron", () => ({ app }));
 
     // @ts-expect-error Vitest executes this isolated ESM module despite the workspace's script module target.
@@ -16,7 +20,9 @@ describe("production bootstrap failure", () => {
 
     expect(app.exit).toHaveBeenCalledOnce();
     expect(app.exit).toHaveBeenCalledWith(1);
-    expect(error).toHaveBeenCalledWith("Desktop startup failed: STARTUP_FAILED");
+    expect(error).toHaveBeenCalledWith(
+      "Desktop startup failed: STARTUP_FAILED",
+    );
     expect(JSON.stringify(error.mock.calls)).not.toContain("secret-path");
     error.mockRestore();
   });

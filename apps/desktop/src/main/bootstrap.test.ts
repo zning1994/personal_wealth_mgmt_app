@@ -1,13 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { startDesktop, app } = vi.hoisted(() => ({ startDesktop: vi.fn().mockResolvedValue(undefined), app: { exit: vi.fn() } }));
+const { startDesktop, registerApplicationProtocolScheme, app } = vi.hoisted(
+  () => ({
+    startDesktop: vi.fn().mockResolvedValue(undefined),
+    registerApplicationProtocolScheme: vi.fn(),
+    app: { exit: vi.fn() },
+  }),
+);
 vi.mock("./index", () => ({ startDesktop }));
+vi.mock("./app-protocol", () => ({ registerApplicationProtocolScheme }));
 vi.mock("electron", () => ({ app }));
 
 import "./bootstrap";
 
 describe("production bootstrap", () => {
   it("starts the desktop exactly once", () => {
+    expect(registerApplicationProtocolScheme).toHaveBeenCalledOnce();
     expect(startDesktop).toHaveBeenCalledOnce();
+    expect(
+      registerApplicationProtocolScheme.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      startDesktop.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
   });
 });

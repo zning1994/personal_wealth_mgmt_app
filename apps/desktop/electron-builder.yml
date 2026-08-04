@@ -1,0 +1,23 @@
+appId: com.personalwealth.desktop
+productName: Personal Wealth
+asar: true
+electronDist: node_modules/electron/dist
+files:
+  - out/**
+  - "!node_modules/**"
+directories:
+  output: release
+buildDependenciesFromSource: false
+npmRebuild: false
+mac:
+  identity: null
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64

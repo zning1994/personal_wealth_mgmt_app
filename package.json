@@ -10,7 +10,10 @@
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
-    "build": "pnpm -r build"
+    "build": "pnpm -r build",
+    "smoke:dist": "pnpm --filter @pwm/desktop smoke:dist",
+    "test:e2e": "pnpm --filter @pwm/desktop test:e2e",
+    "package:dir": "pnpm --filter @pwm/desktop package:dir"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",

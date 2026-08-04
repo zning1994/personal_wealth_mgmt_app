@@ -13,7 +13,10 @@ export function secureWebPreferences(preloadPath: string): WebPreferences {
   };
 }
 
-export function isAllowedApplicationUrl(candidate: string, applicationOrigin: string): boolean {
+export function isAllowedApplicationUrl(
+  candidate: string,
+  applicationOrigin: string,
+): boolean {
   try {
     const candidateUrl = new URL(candidate);
     const allowedUrl = new URL(applicationOrigin);
@@ -28,23 +31,34 @@ export function isAllowedApplicationUrl(candidate: string, applicationOrigin: st
   }
 }
 
-export function installWindowSecurity(targetSession: Session, applicationOrigin: string): void {
+export function installWindowSecurity(
+  targetSession: Session,
+  applicationOrigin: string,
+  isInternalFileRequest: (url: string) => boolean = () => false,
+): void {
   if (!isAllowedApplicationUrl(applicationOrigin, applicationOrigin)) {
     throw new Error("Application origin must use the app protocol");
   }
   if (securedSessions.has(targetSession)) return;
-  targetSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  targetSession.setPermissionRequestHandler(
+    (_contents, _permission, callback) => callback(false),
+  );
   targetSession.setPermissionCheckHandler(() => false);
   targetSession.webRequest.onBeforeRequest(
     { urls: ["http://*/*", "https://*/*", "file://*/*"] },
-    (_details, callback) => callback({ cancel: true }),
+    (details, callback) =>
+      callback({ cancel: !isInternalFileRequest(details.url) }),
   );
   securedSessions.add(targetSession);
 }
 
-export function lockWebContents(contents: WebContents, applicationOrigin: string): void {
+export function lockWebContents(
+  contents: WebContents,
+  applicationOrigin: string,
+): void {
   contents.on("will-navigate", (event, url) => {
-    if (!isAllowedApplicationUrl(url, applicationOrigin)) event.preventDefault();
+    if (!isAllowedApplicationUrl(url, applicationOrigin))
+      event.preventDefault();
   });
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 }

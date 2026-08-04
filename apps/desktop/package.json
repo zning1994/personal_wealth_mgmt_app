@@ -1,27 +1,38 @@
 {
   "name": "@pwm/desktop",
   "version": "0.1.0",
+  "description": "A local-first personal wealth desktop application.",
+  "author": "Personal Wealth contributors",
   "private": true,
   "type": "module",
-  "main": "dist/main/bootstrap.js",
+  "main": "out/main/index.js",
   "scripts": {
+    "dev": "concurrently -k \"electron-vite build --watch\" \"wait-on out/renderer/index.html && electronmon out/main/index.js\"",
+    "build": "electron-vite build",
+    "smoke:dist": "node scripts/assert-dist.mjs",
+    "test:e2e": "pnpm build && playwright test",
+    "package:dir": "pnpm build && electron-builder --dir",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src"
-  },
-  "dependencies": {
-    "@pwm/contracts": "workspace:*",
-    "i18next": "25.3.4",
-    "react": "19.1.1",
-    "react-dom": "19.1.1",
-    "react-i18next": "15.6.1"
+    "lint": "eslint src e2e electron.vite.config.ts playwright.config.ts vitest.config.ts"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@pwm/contracts": "workspace:*",
     "@testing-library/jest-dom": "6.6.4",
     "@testing-library/react": "16.3.0",
     "@types/react": "19.1.9",
     "@types/react-dom": "19.1.7",
+    "concurrently": "10.0.4",
     "electron": "43.2.0",
-    "jsdom": "26.1.0"
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "electronmon": "2.0.4",
+    "i18next": "25.3.4",
+    "jsdom": "26.1.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-i18next": "15.6.1",
+    "wait-on": "9.1.0"
   }
 }

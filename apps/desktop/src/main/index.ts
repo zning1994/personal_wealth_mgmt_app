@@ -1,26 +1,37 @@
 import { app, ipcMain, session, utilityProcess } from "electron";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { BrowserWindow, UtilityProcess } from "electron";
 import type { CommandHandlers } from "./ipc";
+import {
+  APPLICATION_ENTRY_URL,
+  APPLICATION_ORIGIN,
+  installApplicationProtocol,
+  isApplicationAssetFileUrl,
+} from "./app-protocol";
 import { registerCommandHandlers } from "./ipc";
 import { TaskCoordinator } from "./task-coordinator";
 import { createUtilityPort, type ManagedUtilityPort } from "./utility-port";
 import { installWindowSecurity } from "./window-security";
 import { createMainWindow } from "./window";
 
-const RENDERER_URL = "app://personal-wealth/index.html";
-const APPLICATION_ORIGIN = "app://personal-wealth";
 const UTILITY_READY_TIMEOUT_MS = 5_000;
 
 let startup: Promise<void> | undefined;
 
 function desktopPlatform(): "darwin" | "win32" {
-  if (process.platform === "darwin" || process.platform === "win32") return process.platform;
+  if (process.platform === "darwin" || process.platform === "win32")
+    return process.platform;
   throw new Error("Unsupported desktop platform");
 }
 
 function bundledPath(...segments: string[]): string {
-  return join(app.getAppPath(), "dist", ...segments);
+  const appPath = app.getAppPath();
+  const parent = dirname(appPath);
+  const outputRoot =
+    basename(appPath) === "main" && basename(parent) === "out"
+      ? parent
+      : join(appPath, "out");
+  return join(outputRoot, ...segments);
 }
 
 async function awaitUtilityReady(port: ManagedUtilityPort): Promise<void> {
@@ -29,7 +40,10 @@ async function awaitUtilityReady(port: ManagedUtilityPort): Promise<void> {
     await Promise.race([
       port.ready(),
       new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => reject(new Error("Utility process readiness timed out")), UTILITY_READY_TIMEOUT_MS);
+        timeout = setTimeout(
+          () => reject(new Error("Utility process readiness timed out")),
+          UTILITY_READY_TIMEOUT_MS,
+        );
       }),
     ]);
   } finally {
@@ -57,7 +71,13 @@ function disposeDesktop(
 
 async function start(): Promise<void> {
   await app.whenReady();
-  installWindowSecurity(session.defaultSession, APPLICATION_ORIGIN);
+  app.setAppUserModelId("com.personalwealth.desktop");
+  installApplicationProtocol(bundledPath("renderer"));
+  installWindowSecurity(
+    session.defaultSession,
+    APPLICATION_ORIGIN,
+    isApplicationAssetFileUrl,
+  );
 
   let child: UtilityProcess | undefined;
   let port: ManagedUtilityPort | undefined;
@@ -80,14 +100,21 @@ async function start(): Promise<void> {
       mainWindow.webContents.send("task:progress", progress);
     });
     const handlers: CommandHandlers = {
-      "app:get-info": () => ({ name: "Personal Wealth", version: app.getVersion(), platform: desktopPlatform() }),
-      "task:start": (input) => coordinator?.start(input) ?? Promise.reject(new Error("Task coordinator unavailable")),
-      "task:cancel": (input) => coordinator?.cancel(input) ?? { cancelled: false },
+      "app:get-info": () => ({
+        name: "Personal Wealth",
+        version: app.getVersion(),
+        platform: desktopPlatform(),
+      }),
+      "task:start": (input) =>
+        coordinator?.start(input) ??
+        Promise.reject(new Error("Task coordinator unavailable")),
+      "task:cancel": (input) =>
+        coordinator?.cancel(input) ?? { cancelled: false },
     };
     unregisterHandlers = registerCommandHandlers(ipcMain, handlers);
     mainWindow = createMainWindow({
       preloadPath: bundledPath("preload", "index.js"),
-      rendererUrl: RENDERER_URL,
+      rendererUrl: APPLICATION_ENTRY_URL,
     });
     app.once("before-quit", dispose);
   } catch (error) {

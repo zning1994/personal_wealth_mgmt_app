@@ -10,6 +10,8 @@
 # Dependencies and generated build/test output.
 node_modules/
 dist/
+out/
+release/
 coverage/
 .vite/
 test-results/
