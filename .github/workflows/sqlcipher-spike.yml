@@ -96,7 +96,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SQLCIPHER_SOURCE_COMMIT"
           ./configure --with-tempstore=yes \
             CFLAGS="-DSQLITE_HAS_CODEC -DSQLITE_EXTRA_INIT=sqlcipher_extra_init -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown -DSQLCIPHER_CRYPTO_OPENSSL" \
-            LDFLAGS="-lcrypto"
+            LDFLAGS="-L/mingw64/lib" \
+            LIBS="-lcrypto"
           make -j"$(nproc)" sqlite3
           printf '%s\n' "$(cygpath -w /mingw64/bin)" >> "$GITHUB_PATH"
           printf 'PWM_SQLCIPHER_OFFICIAL_CLI=%s\n' "$(cygpath -w "$sqlcipher_root/sqlite3.exe")" >> "$GITHUB_ENV"
