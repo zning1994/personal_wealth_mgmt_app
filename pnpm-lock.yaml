@@ -90,6 +90,12 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
 
+  packages/domain:
+    dependencies:
+      '@pwm/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/storage:
     dependencies:
       better-sqlite3-multiple-ciphers:
