@@ -1,9 +1,4 @@
-import type {
-  OnBeforeRequestListenerDetails,
-  Session,
-  WebContents,
-  WebPreferences,
-} from "electron";
+import type { Session, WebContents, WebPreferences } from "electron";
 
 const securedSessions = new WeakSet<Session>();
 
@@ -39,7 +34,6 @@ export function isAllowedApplicationUrl(
 export function installWindowSecurity(
   targetSession: Session,
   applicationOrigin: string,
-  isInternalFileRequest: (url: string) => boolean = () => false,
 ): void {
   if (!isAllowedApplicationUrl(applicationOrigin, applicationOrigin)) {
     throw new Error("Application origin must use the app protocol");
@@ -51,28 +45,9 @@ export function installWindowSecurity(
   targetSession.setPermissionCheckHandler(() => false);
   targetSession.webRequest.onBeforeRequest(
     { urls: ["http://*/*", "https://*/*", "file://*/*"] },
-    (details, callback) =>
-      callback({
-        cancel: !isProtocolInternalFileRequest(details, isInternalFileRequest),
-      }),
+    (_details, callback) => callback({ cancel: true }),
   );
   securedSessions.add(targetSession);
-}
-
-export function isProtocolInternalFileRequest(
-  details: Pick<
-    OnBeforeRequestListenerDetails,
-    "url" | "resourceType" | "webContentsId" | "webContents" | "frame"
-  >,
-  isInternalFileRequest: (url: string) => boolean,
-): boolean {
-  return (
-    details.resourceType === "other" &&
-    details.webContentsId === undefined &&
-    details.webContents === undefined &&
-    details.frame === undefined &&
-    isInternalFileRequest(details.url)
-  );
 }
 
 export function lockWebContents(

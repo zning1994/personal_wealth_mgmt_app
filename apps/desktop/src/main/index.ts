@@ -6,7 +6,6 @@ import {
   APPLICATION_ENTRY_URL,
   APPLICATION_ORIGIN,
   installApplicationProtocol,
-  isApplicationAssetFileUrl,
 } from "./app-protocol";
 import { registerCommandHandlers } from "./ipc";
 import { TaskCoordinator } from "./task-coordinator";
@@ -73,11 +72,7 @@ async function start(): Promise<void> {
   await app.whenReady();
   app.setAppUserModelId("com.personalwealth.desktop");
   installApplicationProtocol(bundledPath("renderer"));
-  installWindowSecurity(
-    session.defaultSession,
-    APPLICATION_ORIGIN,
-    isApplicationAssetFileUrl,
-  );
+  installWindowSecurity(session.defaultSession, APPLICATION_ORIGIN);
 
   let child: UtilityProcess | undefined;
   let port: ManagedUtilityPort | undefined;

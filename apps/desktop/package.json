@@ -14,7 +14,7 @@
     "package:dir": "pnpm build && electron-builder --dir",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src e2e electron.vite.config.ts playwright.config.ts vitest.config.ts"
+    "lint": "eslint src e2e scripts electron.vite.config.ts playwright.config.ts vitest.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

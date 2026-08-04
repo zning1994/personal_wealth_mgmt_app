@@ -81,61 +81,25 @@ describe("window security", () => {
     expect(networkCallback).toHaveBeenCalledWith({ cancel: true });
   });
 
-  it("allows only file requests explicitly identified as internal renderer assets", () => {
+  it("cancels every HTTP, HTTPS, and file request without an internal exception", () => {
     const onBeforeRequest = vi.fn();
     const targetSession = {
       setPermissionRequestHandler: vi.fn(),
       setPermissionCheckHandler: vi.fn(),
       webRequest: { onBeforeRequest },
     };
-    const isInternalAsset = vi.fn(
-      (url: string) => url === "file:///app/out/renderer/index.html",
-    );
-
-    installWindowSecurity(
-      targetSession as never,
-      "app://desktop",
-      isInternalAsset,
-    );
+    installWindowSecurity(targetSession as never, "app://desktop");
 
     const networkHandler = onBeforeRequest.mock.calls[0]?.[1];
-    const internalCallback = vi.fn();
-    const rendererCallback = vi.fn();
-    const wrongTypeCallback = vi.fn();
-    const externalCallback = vi.fn();
-    networkHandler?.(
-      {
-        url: "file:///app/out/renderer/index.html",
-        resourceType: "other",
-      } as never,
-      internalCallback,
-    );
-    networkHandler?.(
-      {
-        url: "file:///app/out/renderer/index.html",
-        resourceType: "other",
-        webContentsId: 42,
-        webContents: {},
-        frame: {},
-      } as never,
-      rendererCallback,
-    );
-    networkHandler?.(
-      {
-        url: "file:///app/out/renderer/index.html",
-        resourceType: "xhr",
-      } as never,
-      wrongTypeCallback,
-    );
-    networkHandler?.(
-      { url: "file:///private/statement.pdf", resourceType: "other" } as never,
-      externalCallback,
-    );
-    expect(internalCallback).toHaveBeenCalledWith({ cancel: false });
-    expect(rendererCallback).toHaveBeenCalledWith({ cancel: true });
-    expect(wrongTypeCallback).toHaveBeenCalledWith({ cancel: true });
-    expect(externalCallback).toHaveBeenCalledWith({ cancel: true });
-    expect(isInternalAsset).toHaveBeenCalledTimes(2);
+    for (const url of [
+      "file:///app/out/renderer/index.html",
+      "http://example.com/app.js",
+      "https://example.com/app.js",
+    ]) {
+      const callback = vi.fn();
+      networkHandler?.({ url } as never, callback);
+      expect(callback).toHaveBeenCalledWith({ cancel: true });
+    }
   });
 
   it("installs each session policy only once", () => {

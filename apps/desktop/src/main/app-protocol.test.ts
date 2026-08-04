@@ -2,14 +2,12 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,
-  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 const { registerSchemesAsPrivileged, handle, fetch } = vi.hoisted(() => ({
   registerSchemesAsPrivileged: vi.fn(),
@@ -23,10 +21,11 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  asarArchivePath,
+  contentTypeForAsset,
   installApplicationProtocol,
-  isApplicationAssetFileUrl,
+  readVerifiedRendererAsset,
   registerApplicationProtocolScheme,
-  resolveCanonicalRendererAsset,
   resolveRendererAsset,
 } from "./app-protocol";
 
@@ -37,6 +36,9 @@ mkdirSync(path.join(rendererRoot, "assets"), { recursive: true });
 mkdirSync(outsideRoot, { recursive: true });
 writeFileSync(path.join(rendererRoot, "index.html"), "ok");
 writeFileSync(path.join(rendererRoot, "assets", "app.js"), "ok");
+writeFileSync(path.join(rendererRoot, "assets", "app.css"), "ok");
+writeFileSync(path.join(rendererRoot, "assets", "data.json"), "{}");
+writeFileSync(path.join(rendererRoot, "assets", "unknown.bin"), "binary");
 writeFileSync(path.join(outsideRoot, "secret.js"), "secret");
 
 const escapeLink = path.join(rendererRoot, "assets", "escape.js");
@@ -120,16 +122,34 @@ describe("app protocol", () => {
     ).toThrow("Renderer root must be absolute");
   });
 
-  it("resolves existing regular assets through their canonical path", () => {
-    expect(
-      resolveCanonicalRendererAsset("app://desktop/index.html", rendererRoot),
-    ).toBe(realpathSync(path.join(rendererRoot, "index.html")));
-    expect(() =>
-      resolveCanonicalRendererAsset(
+  it.each([
+    [
+      "/Applications/Personal Wealth.app/Contents/Resources/app.asar/out/renderer/index.html",
+      "/Applications/Personal Wealth.app/Contents/Resources/app.asar",
+    ],
+    [
+      "C:\\Program Files\\Personal Wealth\\resources\\app.asar\\out\\renderer\\index.html",
+      "C:\\Program Files\\Personal Wealth\\resources\\app.asar",
+    ],
+    ["/repo/apps/desktop/out/renderer/index.html", undefined],
+    ["/repo/app.asar.unpacked/renderer/index.html", undefined],
+  ])("finds the containing ASAR archive for %s", (assetPath, expected) => {
+    expect(asarArchivePath(assetPath)).toBe(expected);
+  });
+
+  it("reads an existing regular asset from its verified file handle", async () => {
+    const asset = await readVerifiedRendererAsset(
+      "app://desktop/index.html",
+      rendererRoot,
+    );
+    expect(Buffer.from(asset.body).toString("utf8")).toBe("ok");
+    expect(asset.contentType).toBe("text/html; charset=utf-8");
+    await expect(
+      readVerifiedRendererAsset(
         "app://desktop/assets/missing.js",
         rendererRoot,
       ),
-    ).toThrow("Application asset URL is not allowed");
+    ).rejects.toThrow("Application asset URL is not allowed");
   });
 
   const symlinkIt = fileSymlinkSkipReason === undefined ? it : it.skip;
@@ -137,15 +157,32 @@ describe("app protocol", () => {
     fileSymlinkSkipReason === undefined
       ? "rejects a renderer symlink that escapes the canonical root"
       : `rejects a renderer symlink that escapes the canonical root (symlink unavailable: ${fileSymlinkSkipReason})`,
-    () => {
-      expect(() =>
-        resolveCanonicalRendererAsset(
+    async () => {
+      await expect(
+        readVerifiedRendererAsset(
           "app://desktop/assets/escape.js",
           rendererRoot,
         ),
-      ).toThrow("Application asset URL is not allowed");
+      ).rejects.toThrow("Application asset URL is not allowed");
     },
   );
+
+  it.each([
+    ["index.html", "text/html; charset=utf-8"],
+    ["app.js", "text/javascript; charset=utf-8"],
+    ["app.css", "text/css; charset=utf-8"],
+    ["data.json", "application/json; charset=utf-8"],
+    ["icon.svg", "image/svg+xml"],
+    ["icon.png", "image/png"],
+    ["photo.jpg", "image/jpeg"],
+    ["photo.jpeg", "image/jpeg"],
+    ["photo.webp", "image/webp"],
+    ["font.woff", "font/woff"],
+    ["font.woff2", "font/woff2"],
+    ["unknown.bin", "application/octet-stream"],
+  ])("maps %s to %s", (filename, expected) => {
+    expect(contentTypeForAsset(filename)).toBe(expected);
+  });
 
   it("registers the app scheme with the exact privileged surface", () => {
     registerApplicationProtocolScheme();
@@ -159,10 +196,7 @@ describe("app protocol", () => {
     ]);
   });
 
-  it("installs a file-backed handler that reuses strict URL containment", async () => {
-    const response = new Response("ok");
-    fetch.mockResolvedValue(response);
-
+  it("serves a Response from verified bytes without issuing a file request", async () => {
     installApplicationProtocol(rendererRoot);
 
     expect(handle).toHaveBeenCalledOnce();
@@ -170,40 +204,17 @@ describe("app protocol", () => {
     const handler = handle.mock.calls[0]?.[1] as (request: {
       url: string;
     }) => Promise<Response>;
-    await expect(handler({ url: "app://desktop/index.html" })).resolves.toBe(
-      response,
+    const response = await handler({ url: "app://desktop/index.html" });
+    expect(await response.text()).toBe("ok");
+    expect(response.headers.get("content-type")).toBe(
+      "text/html; charset=utf-8",
     );
-    expect(fetch).toHaveBeenCalledWith(
-      pathToFileURL(
-        realpathSync(path.join(rendererRoot, "index.html")),
-      ).toString(),
-    );
-    expect(
-      isApplicationAssetFileUrl(
-        pathToFileURL(path.join(rendererRoot, "assets", "app.js")).toString(),
-      ),
-    ).toBe(true);
-    expect(
-      isApplicationAssetFileUrl(
-        pathToFileURL(path.join(outsideRoot, "secret.js")).toString(),
-      ),
-    ).toBe(false);
-    expect(
-      isApplicationAssetFileUrl(
-        pathToFileURL(
-          path.join(rendererRoot, "assets", "missing.js"),
-        ).toString(),
-      ),
-    ).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
     if (fileSymlinkSkipReason === undefined) {
-      expect(
-        isApplicationAssetFileUrl(pathToFileURL(escapeLink).toString()),
-      ).toBe(false);
       await expect(
         handler({ url: "app://desktop/assets/escape.js" }),
       ).rejects.toThrow("Application asset URL is not allowed");
     }
-    expect(isApplicationAssetFileUrl("https://example.com/app.js")).toBe(false);
     await expect(
       handler({ url: "app://desktop/../main/index.js" }),
     ).rejects.toThrow("Application asset URL is not allowed");

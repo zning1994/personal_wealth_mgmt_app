@@ -51,7 +51,6 @@ vi.mock("./app-protocol", () => ({
   APPLICATION_ENTRY_URL: "app://desktop/index.html",
   APPLICATION_ORIGIN: "app://desktop",
   installApplicationProtocol,
-  isApplicationAssetFileUrl: vi.fn(() => true),
 }));
 vi.mock("./ipc", () => ({ registerCommandHandlers }));
 vi.mock("./task-coordinator", () => ({ TaskCoordinator: taskCoordinator }));
@@ -147,6 +146,10 @@ describe("startDesktop", () => {
     );
     expect(installApplicationProtocol).toHaveBeenCalledWith(
       "/app/out/renderer",
+    );
+    expect(installWindowSecurity).toHaveBeenCalledWith(
+      session.defaultSession,
+      "app://desktop",
     );
     expect(utilityProcess.fork).toHaveBeenCalledWith(
       "/app/out/worker/index.js",

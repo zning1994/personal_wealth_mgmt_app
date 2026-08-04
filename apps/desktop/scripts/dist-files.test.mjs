@@ -7,95 +7,139 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
-import { assertRegularFile, filesBelow } from "./dist-files.mjs";
+import process from "node:process";
+import { afterEach, describe, expect, it } from "vitest";
+import { assertDistribution } from "./assert-distribution.mjs";
 
-const fixtureRoot = mkdtempSync(path.join(tmpdir(), "pwm-dist-files-"));
-const outputRoot = path.join(fixtureRoot, "out");
-const nestedRoot = path.join(outputRoot, "renderer", "assets");
-mkdirSync(nestedRoot, { recursive: true });
-const entryFile = path.join(outputRoot, "renderer", "index.html");
-const nestedFile = path.join(nestedRoot, "app.js");
-writeFileSync(entryFile, "ok");
-writeFileSync(nestedFile, "ok");
+const requiredContentSecurityPolicy =
+  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const fixtures = [];
 
-const cleanRoot = path.join(fixtureRoot, "clean");
-const cleanNestedRoot = path.join(cleanRoot, "assets");
-mkdirSync(cleanNestedRoot, { recursive: true });
-const cleanEntryFile = path.join(cleanRoot, "index.html");
-const cleanNestedFile = path.join(cleanNestedRoot, "app.js");
-writeFileSync(cleanEntryFile, "ok");
-writeFileSync(cleanNestedFile, "ok");
-
-const fileLink = path.join(nestedRoot, "linked.js");
-let fileSymlinkSkipReason;
-try {
-  symlinkSync(nestedFile, fileLink, "file");
-} catch (error) {
-  if (!["EPERM", "EACCES", "ENOSYS"].includes(error.code)) throw error;
-  fileSymlinkSkipReason = error.code;
+function fixtureRoot() {
+  const root = mkdtempSync(path.join(tmpdir(), "pwm-distribution-"));
+  fixtures.push(root);
+  return root;
 }
 
-const directoryCaseRoot = path.join(fixtureRoot, "directory-case");
-const directoryTargetRoot = path.join(fixtureRoot, "directory-target");
-mkdirSync(directoryCaseRoot, { recursive: true });
-mkdirSync(directoryTargetRoot, { recursive: true });
-writeFileSync(path.join(directoryTargetRoot, "external.js"), "outside");
-const directoryLink = path.join(directoryCaseRoot, "linked-renderer");
-let directorySymlinkSkipReason;
-try {
-  symlinkSync(
-    directoryTargetRoot,
-    directoryLink,
-    process.platform === "win32" ? "junction" : "dir",
-  );
-} catch (error) {
-  if (!["EPERM", "EACCES", "ENOSYS"].includes(error.code)) throw error;
-  directorySymlinkSkipReason = error.code;
+function writeFixture(root, relativePath, contents) {
+  const pathname = path.join(root, relativePath);
+  mkdirSync(path.dirname(pathname), { recursive: true });
+  writeFileSync(pathname, contents);
+  return pathname;
 }
 
-afterAll(() => {
-  rmSync(fixtureRoot, { recursive: true, force: true });
+function validDistribution(options = {}) {
+  const root = fixtureRoot();
+  const omitted = new Set(options.omit ?? []);
+  const files = {
+    "out/main/index.js": "console.log('main')",
+    "out/preload/index.js": "console.log('preload')",
+    "out/worker/index.js": "console.log('worker')",
+    "out/renderer/index.html": `<meta http-equiv="Content-Security-Policy" content="${requiredContentSecurityPolicy}">`,
+    "out/renderer/assets/app.js": "console.log('renderer')",
+  };
+  for (const [relativePath, contents] of Object.entries(files)) {
+    if (!omitted.has(relativePath)) writeFixture(root, relativePath, contents);
+  }
+  return root;
+}
+
+function symlinkUnavailable(error) {
+  return ["EPERM", "EACCES", "ENOSYS"].includes(error.code);
+}
+
+afterEach(() => {
+  for (const root of fixtures.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-describe("distribution filesystem assertions", () => {
-  it("accepts only regular required artifacts and recursively lists regular files", async () => {
+describe("distribution assertions", () => {
+  it("accepts a complete safe distribution", async () => {
     await expect(
-      assertRegularFile(cleanEntryFile, "renderer/index.html"),
+      assertDistribution(validDistribution()),
     ).resolves.toBeUndefined();
-    await expect(filesBelow(cleanRoot)).resolves.toEqual(
-      expect.arrayContaining([cleanEntryFile, cleanNestedFile]),
-    );
-    await expect(
-      assertRegularFile(cleanRoot, "renderer/index.html"),
-    ).rejects.toThrow("not a regular file");
   });
 
-  const fileSymlinkIt = fileSymlinkSkipReason === undefined ? it : it.skip;
-  fileSymlinkIt(
-    fileSymlinkSkipReason === undefined
-      ? "rejects a symlinked file"
-      : `rejects a symlinked file (symlink unavailable: ${fileSymlinkSkipReason})`,
-    async () => {
-      await expect(
-        assertRegularFile(fileLink, "renderer/linked.js"),
-      ).rejects.toThrow("symbolic link");
-      await expect(
-        filesBelow(path.join(outputRoot, "renderer")),
-      ).rejects.toThrow("symbolic link");
-    },
-  );
+  it("rejects a missing required artifact", async () => {
+    const root = validDistribution({ omit: ["out/worker/index.js"] });
+    await expect(assertDistribution(root)).rejects.toThrow(
+      "Missing required desktop artifact: out/worker/index.js",
+    );
+  });
 
-  const directorySymlinkIt =
-    directorySymlinkSkipReason === undefined ? it : it.skip;
-  directorySymlinkIt(
-    directorySymlinkSkipReason === undefined
-      ? "rejects a symlinked directory"
-      : `rejects a symlinked directory (symlink unavailable: ${directorySymlinkSkipReason})`,
-    async () => {
-      await expect(filesBelow(directoryCaseRoot)).rejects.toThrow(
-        "symbolic link",
+  it("rejects a forbidden renderer literal", async () => {
+    const root = validDistribution();
+    writeFixture(root, "out/renderer/assets/app.js", "require('node:fs')");
+    await expect(assertDistribution(root)).rejects.toThrow(
+      'Forbidden renderer literal "node:fs"',
+    );
+  });
+
+  it.each([
+    ["missing", "<html></html>"],
+    ["incomplete", "<meta content=\"default-src 'self'\">"],
+  ])("rejects a %s renderer CSP", async (_case, html) => {
+    const root = validDistribution();
+    writeFixture(root, "out/renderer/index.html", html);
+    await expect(assertDistribution(root)).rejects.toThrow(
+      "Renderer Content Security Policy is missing or incomplete",
+    );
+  });
+
+  it("rejects an unbundled workspace runtime specifier", async () => {
+    const root = validDistribution();
+    writeFixture(root, "out/main/index.js", "import '@pwm/contracts'");
+    await expect(assertDistribution(root)).rejects.toThrow(
+      'Unbundled workspace runtime specifier "@pwm/contracts"',
+    );
+  });
+
+  it("rejects a symlink used as a required artifact", async (context) => {
+    const root = validDistribution({ omit: ["out/main/index.js"] });
+    const target = writeFixture(root, "outside/main.js", "outside");
+    const link = path.join(root, "out/main/index.js");
+    mkdirSync(path.dirname(link), { recursive: true });
+    try {
+      symlinkSync(target, link, "file");
+    } catch (error) {
+      if (!symlinkUnavailable(error)) throw error;
+      context.skip(`file symlink unavailable: ${error.code}`);
+      return;
+    }
+    await expect(assertDistribution(root)).rejects.toThrow("symbolic link");
+  });
+
+  it("rejects a nested file symlink", async (context) => {
+    const root = validDistribution();
+    const target = writeFixture(root, "outside/asset.js", "outside");
+    const link = path.join(root, "out/renderer/assets/linked.js");
+    try {
+      symlinkSync(target, link, "file");
+    } catch (error) {
+      if (!symlinkUnavailable(error)) throw error;
+      context.skip(`file symlink unavailable: ${error.code}`);
+      return;
+    }
+    await expect(assertDistribution(root)).rejects.toThrow("symbolic link");
+  });
+
+  it("rejects a nested directory symlink", async (context) => {
+    const root = validDistribution();
+    const target = path.join(root, "outside/assets");
+    mkdirSync(target, { recursive: true });
+    const link = path.join(root, "out/renderer/linked-assets");
+    try {
+      symlinkSync(
+        target,
+        link,
+        process.platform === "win32" ? "junction" : "dir",
       );
-    },
-  );
+    } catch (error) {
+      if (!symlinkUnavailable(error)) throw error;
+      context.skip(`directory symlink unavailable: ${error.code}`);
+      return;
+    }
+    await expect(assertDistribution(root)).rejects.toThrow("symbolic link");
+  });
 });
