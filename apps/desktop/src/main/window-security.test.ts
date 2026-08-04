@@ -21,6 +21,7 @@ describe("window security", () => {
   it("allows only the exact application origin", () => {
     expect(isAllowedApplicationUrl("app://desktop/index.html", "app://desktop")).toBe(true);
     expect(isAllowedApplicationUrl("app://desktop.evil/index.html", "app://desktop")).toBe(false);
+    expect(isAllowedApplicationUrl("https://desktop/index.html", "https://desktop")).toBe(false);
     expect(isAllowedApplicationUrl("https://example.com", "app://desktop")).toBe(false);
     expect(isAllowedApplicationUrl("file:///tmp/statement.pdf", "app://desktop")).toBe(false);
     expect(isAllowedApplicationUrl("not a URL", "app://desktop")).toBe(false);
@@ -54,6 +55,24 @@ describe("window security", () => {
     );
     networkHandler?.({} as never, networkCallback);
     expect(networkCallback).toHaveBeenCalledWith({ cancel: true });
+  });
+
+  it("installs each session policy only once", () => {
+    const setPermissionRequestHandler = vi.fn();
+    const setPermissionCheckHandler = vi.fn();
+    const onBeforeRequest = vi.fn();
+    const targetSession = {
+      setPermissionRequestHandler,
+      setPermissionCheckHandler,
+      webRequest: { onBeforeRequest },
+    };
+
+    installWindowSecurity(targetSession as never, "app://desktop");
+    installWindowSecurity(targetSession as never, "app://desktop");
+
+    expect(setPermissionRequestHandler).toHaveBeenCalledOnce();
+    expect(setPermissionCheckHandler).toHaveBeenCalledOnce();
+    expect(onBeforeRequest).toHaveBeenCalledOnce();
   });
 
   it("blocks navigation outside the application origin and all new windows", () => {
