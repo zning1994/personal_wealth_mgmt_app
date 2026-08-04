@@ -4,6 +4,7 @@ import { TaskCoordinator, type UtilityPort } from "./task-coordinator";
 
 function createPort() {
   let listener: ((message: unknown) => void) | undefined;
+  let disconnectListener: (() => void) | undefined;
   const unsubscribe = vi.fn();
   const port: UtilityPort = {
     postMessage: vi.fn(),
@@ -14,6 +15,12 @@ function createPort() {
         unsubscribe();
       };
     },
+    onDisconnect(nextListener) {
+      disconnectListener = nextListener;
+      return () => {
+        disconnectListener = undefined;
+      };
+    },
   };
   return {
     port,
@@ -21,6 +28,9 @@ function createPort() {
     unsubscribe,
     receive(message: unknown) {
       listener?.(message);
+    },
+    disconnect() {
+      disconnectListener?.();
     },
   };
 }
@@ -268,5 +278,17 @@ describe("TaskCoordinator", () => {
     expect(coordinator.start(taskInput)).toEqual({ taskId });
     expect(coordinator.diagnosticCounts()).toEqual({ active: 1, issued: 1, cancellationRequested: 0 });
     expect(utility.postMessage).toHaveBeenLastCalledWith({ type: "start", taskId, task: taskInput });
+  });
+
+  it("clears active tasks when the utility transport disconnects", () => {
+    const utility = createPort();
+    const taskId = "018f4f7e-8ead-7c0d-8000-000000000030" as TaskId;
+    const coordinator = new TaskCoordinator(utility.port, vi.fn(), () => taskId);
+    coordinator.start(taskInput);
+
+    utility.disconnect();
+
+    expect(coordinator.cancel({ taskId })).toEqual({ cancelled: false });
+    expect(coordinator.diagnosticCounts()).toEqual({ active: 0, issued: 1, cancellationRequested: 0 });
   });
 });

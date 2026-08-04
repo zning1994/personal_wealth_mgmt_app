@@ -12,6 +12,7 @@ import {
 export interface UtilityPort {
   postMessage(message: WorkerRequest): void;
   onMessage(listener: (message: unknown) => void): () => void;
+  onDisconnect?(listener: () => void): () => void;
 }
 
 export const DEFAULT_ISSUED_TASK_CAPACITY = 256;
@@ -38,6 +39,7 @@ export class TaskCoordinator {
   private readonly createId: () => TaskId;
   private readonly issuedCapacity: number;
   private unsubscribe: (() => void) | undefined;
+  private unsubscribeDisconnect: (() => void) | undefined;
   private disposed = false;
 
   constructor(
@@ -49,6 +51,7 @@ export class TaskCoordinator {
     this.createId = createId ?? (() => TaskIdSchema.parse(crypto.randomUUID()));
     this.issuedCapacity = resolveIssuedCapacity(options.issuedCapacity);
     this.unsubscribe = this.port.onMessage((message) => this.receiveWorkerMessage(message));
+    this.unsubscribeDisconnect = this.port.onDisconnect?.(() => this.receiveTransportFailure());
   }
 
   start(input: StartUtilityTaskInput): TaskStarted {
@@ -99,6 +102,8 @@ export class TaskCoordinator {
     this.disposed = true;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.unsubscribeDisconnect?.();
+    this.unsubscribeDisconnect = undefined;
     this.active.clear();
     this.cancellationRequested.clear();
   }
@@ -125,5 +130,11 @@ export class TaskCoordinator {
 
     if (!this.active.delete(response.taskId)) return;
     this.cancellationRequested.delete(response.taskId);
+  }
+
+  private receiveTransportFailure(): void {
+    if (this.disposed) return;
+    this.active.clear();
+    this.cancellationRequested.clear();
   }
 }

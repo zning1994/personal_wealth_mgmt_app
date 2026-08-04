@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attachTransferredUtilityWorker,
   INVALID_WORKER_MESSAGE_DIAGNOSTIC,
   attachProductionUtilityWorker,
 } from "./entrypoint";
@@ -25,5 +26,41 @@ describe("production utility worker entrypoint", () => {
 
     expect(diagnostics).toEqual([INVALID_WORKER_MESSAGE_DIAGNOSTIC]);
     expect(responses).toEqual([]);
+  });
+
+  it("adapts the transferred MessagePort instead of the parent control port", async () => {
+    let transferListener: ((event: { ports: unknown[] }) => void) | undefined;
+    const parentPort = {
+      once(_event: "message", listener: (event: { ports: unknown[] }) => void) {
+        transferListener = listener;
+      },
+    };
+    let messageListener: ((event: { data: unknown }) => void) | undefined;
+    const port = {
+      postMessage: (message: unknown) => responses.push(message),
+      on(_event: "message", listener: (event: { data: unknown }) => void) {
+        messageListener = listener;
+      },
+      off: () => undefined,
+      start: () => undefined,
+    };
+    const responses: unknown[] = [];
+
+    attachTransferredUtilityWorker(parentPort);
+    transferListener?.({ ports: [port] });
+    messageListener?.({
+      data: {
+        type: "start",
+        taskId: "018f4f7e-8ead-7c0d-8000-000000000031",
+        task: { kind: "health-check", payload: { echo: "ok" } },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(responses).toContainEqual({
+      type: "result",
+      taskId: "018f4f7e-8ead-7c0d-8000-000000000031",
+      result: { echo: "ok" },
+    });
   });
 });
