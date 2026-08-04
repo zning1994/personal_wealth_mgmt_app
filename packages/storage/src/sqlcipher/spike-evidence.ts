@@ -38,6 +38,23 @@ export function isCipherIntegrityClean(rows: readonly Record<string, unknown>[])
   return rows.length === 0;
 }
 
+const DEFAULT_SQLCIPHER_VERSION_PATTERN = String.raw`\bSQLCipher(?:\s+version)?\s+v?(\d+)(?:\.\d+){1,2}\b`;
+
+export function isOfficialSqlCipher4Version(
+  output: string,
+  patternSource = DEFAULT_SQLCIPHER_VERSION_PATTERN,
+): boolean {
+  let pattern: RegExp;
+  try {
+    pattern = new RegExp(patternSource, "iu");
+  } catch {
+    return false;
+  }
+  const match = pattern.exec(output);
+  if (!match?.[1] || !/^\d+$/u.test(match[1])) return false;
+  return Number(match[1]) >= 4;
+}
+
 export async function scanCrashArtifactsBeforeRecovery<T>(
   rootPaths: readonly string[],
   needles: readonly Uint8Array[],
@@ -74,11 +91,11 @@ export function parseElectronCrashMarker(value: string): ElectronCrashMarker | u
 }
 
 export async function readLoadedBindingVersion(): Promise<string> {
-  const manifestPath = require.resolve("@journeyapps/sqlcipher/package.json");
+  const manifestPath = require.resolve("better-sqlite3-multiple-ciphers/package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
   if (
     !isRecord(manifest) ||
-    manifest.name !== "@journeyapps/sqlcipher" ||
+    manifest.name !== "better-sqlite3-multiple-ciphers" ||
     typeof manifest.version !== "string" ||
     manifest.version.length === 0
   ) {

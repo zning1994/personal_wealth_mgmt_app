@@ -5,11 +5,15 @@ const passingReport = {
   platform: "darwin",
   arch: "arm64",
   electronVersion: "43.2.0",
-  bindingVersion: "6.0.0",
+  bindingVersion: "12.11.1",
+  cipherImplementation: "better-sqlite3-multiple-ciphers",
+  cipherMode: "sqlcipher-legacy-4",
   wrongKeyRejected: true,
   plaintextHits: [],
   crashArtifactsClean: true,
   backupRoundTrip: true,
+  packagedNativeLoad: true,
+  sqlCipher4Compatibility: true,
   signedPackageLaunch: true,
 };
 
@@ -32,9 +36,13 @@ describe("SQLCipher spike report gate", () => {
     ],
     ["dirty crash artifact", { crashArtifactsClean: false }, "sqlcipher-spike-gate-failed"],
     ["failed backup", { backupRoundTrip: false }, "sqlcipher-spike-gate-failed"],
+    ["package native load failure", { packagedNativeLoad: false }, "sqlcipher-spike-gate-failed"],
+    ["incompatible official fixture", { sqlCipher4Compatibility: false }, "sqlcipher-spike-gate-failed"],
+    ["default sqleet mode", { cipherMode: "sqleet" }, "invalid-sqlcipher-spike-report"],
+    ["wrong implementation", { cipherImplementation: "other" }, "invalid-sqlcipher-spike-report"],
     ["unsigned package", { signedPackageLaunch: false }, "sqlcipher-spike-gate-failed"],
     ["wrong Electron", { electronVersion: "43.1.0" }, "sqlcipher-spike-gate-failed"],
-    ["wrong binding", { bindingVersion: "5.4.0" }, "sqlcipher-spike-gate-failed"],
+    ["wrong binding", { bindingVersion: "12.11.0" }, "sqlcipher-spike-gate-failed"],
   ])("rejects %s", (_name, change, expectedError) => {
     expect(() =>
       assertSpikeReport(parseSpikeReport({ ...passingReport, ...change }), {

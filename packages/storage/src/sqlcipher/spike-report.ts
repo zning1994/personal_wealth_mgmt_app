@@ -5,10 +5,14 @@ export interface SqlCipherSpikeReport {
   readonly arch: "arm64" | "x64";
   readonly electronVersion: string;
   readonly bindingVersion: string;
+  readonly cipherImplementation: "better-sqlite3-multiple-ciphers";
+  readonly cipherMode: "sqlcipher-legacy-4";
   readonly wrongKeyRejected: boolean;
   readonly plaintextHits: readonly PlaintextHit[];
   readonly crashArtifactsClean: boolean;
   readonly backupRoundTrip: boolean;
+  readonly packagedNativeLoad: boolean;
+  readonly sqlCipher4Compatibility: boolean;
   readonly signedPackageLaunch: boolean;
 }
 
@@ -22,10 +26,14 @@ const reportKeys = [
   "arch",
   "electronVersion",
   "bindingVersion",
+  "cipherImplementation",
+  "cipherMode",
   "wrongKeyRejected",
   "plaintextHits",
   "crashArtifactsClean",
   "backupRoundTrip",
+  "packagedNativeLoad",
+  "sqlCipher4Compatibility",
   "signedPackageLaunch",
 ] as const;
 
@@ -59,11 +67,15 @@ export function parseSpikeReport(value: unknown): SqlCipherSpikeReport {
     value.electronVersion.length === 0 ||
     typeof value.bindingVersion !== "string" ||
     value.bindingVersion.length === 0 ||
+    value.cipherImplementation !== "better-sqlite3-multiple-ciphers" ||
+    value.cipherMode !== "sqlcipher-legacy-4" ||
     typeof value.wrongKeyRejected !== "boolean" ||
     !Array.isArray(value.plaintextHits) ||
     !value.plaintextHits.every(isPlaintextHit) ||
     typeof value.crashArtifactsClean !== "boolean" ||
     typeof value.backupRoundTrip !== "boolean" ||
+    typeof value.packagedNativeLoad !== "boolean" ||
+    typeof value.sqlCipher4Compatibility !== "boolean" ||
     typeof value.signedPackageLaunch !== "boolean"
   ) {
     throw new Error("invalid-sqlcipher-spike-report");
@@ -82,10 +94,14 @@ export function assertSpikeReport(
   if (
     !report.wrongKeyRejected ||
     report.electronVersion !== "43.2.0" ||
-    report.bindingVersion !== "6.0.0" ||
+    report.bindingVersion !== "12.11.1" ||
+    report.cipherImplementation !== "better-sqlite3-multiple-ciphers" ||
+    report.cipherMode !== "sqlcipher-legacy-4" ||
     report.plaintextHits.length !== 0 ||
     !report.crashArtifactsClean ||
     !report.backupRoundTrip ||
+    !report.packagedNativeLoad ||
+    !report.sqlCipher4Compatibility ||
     !report.signedPackageLaunch
   ) {
     throw new Error("sqlcipher-spike-gate-failed");

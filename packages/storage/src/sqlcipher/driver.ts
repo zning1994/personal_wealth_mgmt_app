@@ -1,4 +1,5 @@
-import type { Database } from "@journeyapps/sqlcipher";
+import type Database from "better-sqlite3-multiple-ciphers";
+import { configureSqlCipher4 } from "./configure";
 
 export interface SqlCipherOpenOptions {
   readonly filePath: string;
@@ -20,111 +21,55 @@ export interface SqlCipherConnection {
   close(): Promise<void>;
 }
 
-type SqlCipherModule = typeof import("@journeyapps/sqlcipher");
+type NativeDatabase = Database.Database;
 
-function openNativeDatabase(
-  sqlite3: SqlCipherModule,
-  filePath: string,
-  flags: number,
-): Promise<Database> {
-  return new Promise((resolve, reject) => {
-    const database = new sqlite3.Database(filePath, flags, (error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(database);
-    });
-  });
-}
-
-function execNative(database: Database, sql: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    database.exec(sql, (error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
-}
-
-function getNative<T extends Record<string, unknown>>(
-  database: Database,
-  sql: string,
-  params: readonly unknown[] = [],
-): Promise<T | undefined> {
-  return new Promise((resolve, reject) => {
-    database.get(sql, params, (error, row: T | undefined) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(row);
-    });
-  });
-}
-
-function allNative<T extends Record<string, unknown>>(
-  database: Database,
-  sql: string,
-  params: readonly unknown[] = [],
-): Promise<readonly T[]> {
-  return new Promise((resolve, reject) => {
-    database.all(sql, params, (error, rows: T[]) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(rows);
-    });
-  });
-}
-
-function closeNative(database: Database): Promise<void> {
-  return new Promise((resolve, reject) => {
-    database.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
-}
-
-function adaptNativeDatabase(database: Database): SqlCipherConnection {
+function adaptNativeDatabase(database: NativeDatabase): SqlCipherConnection {
   let closing: Promise<void> | undefined;
 
-  const connection: SqlCipherConnection = {
-    exec: (sql) => execNative(database, sql),
-    get: <T extends Record<string, unknown>>(sql: string, params?: readonly unknown[]) =>
-      getNative<T>(database, sql, params),
-    all: <T extends Record<string, unknown>>(sql: string, params?: readonly unknown[]) =>
-      allNative<T>(database, sql, params),
+  return {
+    exec: async (sql) => {
+      database.exec(sql);
+    },
+    get: async <T extends Record<string, unknown>>(
+      sql: string,
+      params: readonly unknown[] = [],
+    ) => database.prepare<unknown[], T>(sql).get(...params),
+    all: async <T extends Record<string, unknown>>(
+      sql: string,
+      params: readonly unknown[] = [],
+    ) => {
+      const statement = database.prepare<unknown[], T>(sql);
+      if (!statement.reader) {
+        if (/^\s*PRAGMA\s+cipher_integrity_check\s*;?\s*$/iu.test(sql)) {
+          const rows = database.pragma("cipher_integrity_check");
+          return Array.isArray(rows) ? rows as T[] : [];
+        }
+        throw new Error("sqlcipher-query-does-not-return-data");
+      }
+      return statement.all(...params);
+    },
     transaction: async <T>(work: () => Promise<T>): Promise<T> => {
-      await execNative(database, "BEGIN IMMEDIATE");
+      database.exec("BEGIN IMMEDIATE");
       try {
         const result = await work();
-        await execNative(database, "COMMIT");
+        database.exec("COMMIT");
         return result;
       } catch (error: unknown) {
         try {
-          await execNative(database, "ROLLBACK");
+          database.exec("ROLLBACK");
         } catch {
-          // Preserve the operation failure; connection close/recovery is owned by the caller.
+          // Preserve the operation failure; caller-owned recovery handles close failures.
         }
         throw error;
       }
     },
     close: () => {
-      closing ??= closeNative(database);
+      closing ??= Promise.resolve().then(() => {
+        if (database.open) database.close();
+      });
       return closing;
     },
   };
-
-  return connection;
 }
 
 export async function openSqlCipher(options: SqlCipherOpenOptions): Promise<SqlCipherConnection> {
@@ -132,29 +77,20 @@ export async function openSqlCipher(options: SqlCipherOpenOptions): Promise<SqlC
     throw new Error("invalid-sqlcipher-key-length");
   }
 
-  const imported = await import("@journeyapps/sqlcipher");
-  const sqlite3: SqlCipherModule =
-    "Database" in imported
-      ? imported
-      : (imported as unknown as { readonly default: SqlCipherModule }).default;
-  const flags =
-    options.mode === "read-only"
-      ? sqlite3.OPEN_READONLY
-      : sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE;
-  const database = await openNativeDatabase(sqlite3, options.filePath, flags);
+  const { default: DatabaseConstructor } = await import("better-sqlite3-multiple-ciphers");
+  const database = new DatabaseConstructor(options.filePath, {
+    readonly: options.mode === "read-only",
+    fileMustExist: options.mode === "read-only",
+  });
 
   try {
-    const keyHex = Buffer.from(options.key).toString("hex");
-    await execNative(database, `PRAGMA key = "x'${keyHex}'"`);
-    await execNative(database, "PRAGMA cipher_memory_security = ON");
-    await execNative(database, "PRAGMA foreign_keys = ON");
-    await getNative(database, "SELECT count(*) AS count FROM sqlite_master");
+    configureSqlCipher4(database, options.key);
     return adaptNativeDatabase(database);
   } catch (error: unknown) {
     try {
-      await closeNative(database);
+      if (database.open) database.close();
     } catch {
-      // The validation error is the useful failure and must not be replaced by cleanup failure.
+      // Preserve the validation error rather than replacing it with cleanup failure.
     }
     throw error;
   }

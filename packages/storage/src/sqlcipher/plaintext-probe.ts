@@ -20,13 +20,19 @@ async function scanRegularFile(
   reportedPath: string,
   needles: readonly Buffer[],
 ): Promise<PlaintextHit[]> {
-  const handle = await open(physicalPath, constants.O_RDONLY);
+  // O_NOFOLLOW closes the final-component race on POSIX. Windows lacks an equivalent
+  // Node flag, so fstat below still rejects non-regular handles after opening.
+  const noFollow = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+  const handle = await open(physicalPath, constants.O_RDONLY | noFollow);
   const hits: PlaintextHit[] = [];
   const maxNeedleLength = Math.max(...needles.map((needle) => needle.byteLength));
   let carry = Buffer.alloc(0);
   let bytesConsumed = 0;
 
   try {
+    if (!(await handle.stat()).isFile()) {
+      throw new Error("plaintext-probe-not-regular-file");
+    }
     const chunk = Buffer.allocUnsafe(SCAN_CHUNK_SIZE);
     while (true) {
       const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, null);

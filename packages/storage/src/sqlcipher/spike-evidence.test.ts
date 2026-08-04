@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openSqlCipher } from "./driver";
 import {
   isCipherIntegrityClean,
+  isOfficialSqlCipher4Version,
   parseElectronCrashMarker,
   readLoadedBindingVersion,
   scanCrashArtifactsBeforeRecovery,
@@ -58,6 +59,15 @@ describe("SQLCipher spike evidence", () => {
     expect(isCipherIntegrityClean([{ cipher_integrity_check: "corrupt" }])).toBe(false);
   });
 
+  it("accepts only an identified SQLCipher major version 4 or newer", () => {
+    expect(isOfficialSqlCipher4Version("3.45.2 2024-03-12 SQLite")).toBe(false);
+    expect(isOfficialSqlCipher4Version("SQLite 4.0.0 with SQLCipher compatibility")).toBe(false);
+    expect(isOfficialSqlCipher4Version("SQLCipher 3.4.2 Community")).toBe(false);
+    expect(isOfficialSqlCipher4Version("SQLCipher 4.6.1 Community")).toBe(true);
+    expect(isOfficialSqlCipher4Version("Zetetic-SQLCipher/4.6.1", String.raw`Zetetic-SQLCipher/(\d+)\.`)).toBe(true);
+    expect(isOfficialSqlCipher4Version("SQLCipher 4.6.1", "[")).toBe(false);
+  });
+
   it("scans an active WAL before recovery removes it and fails the report gate", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pwm-active-wal-"));
     temporaryRoots.push(root);
@@ -80,11 +90,15 @@ describe("SQLCipher spike evidence", () => {
           platform: "darwin",
           arch: "arm64",
           electronVersion: "43.2.0",
-          bindingVersion: "6.0.0",
+          bindingVersion: "12.11.1",
+          cipherImplementation: "better-sqlite3-multiple-ciphers",
+          cipherMode: "sqlcipher-legacy-4",
           wrongKeyRejected: true,
           plaintextHits: evidence.plaintextHits,
           crashArtifactsClean: true,
           backupRoundTrip: true,
+          packagedNativeLoad: true,
+          sqlCipher4Compatibility: true,
           signedPackageLaunch: true,
         }),
         { platform: "darwin", arch: "arm64" },
@@ -120,6 +134,6 @@ describe("SQLCipher spike evidence", () => {
   });
 
   it("reads the version from the loaded SQLCipher package manifest", async () => {
-    await expect(readLoadedBindingVersion()).resolves.toBe("6.0.0");
+    await expect(readLoadedBindingVersion()).resolves.toBe("12.11.1");
   });
 });

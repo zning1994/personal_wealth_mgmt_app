@@ -16,6 +16,10 @@ describe("SQLCipher executable spike", () => {
       .filter((name) => name.startsWith("pwm-sqlcipher-spike-"))
       .sort();
     const environment = { ...process.env };
+    environment.PWM_SQLCIPHER_OFFICIAL_CLI = path.join(
+      tmpdir(),
+      "pwm-missing-official-sqlcipher-cli",
+    );
     for (const name of [
       "CSC_LINK",
       "CSC_KEY_PASSWORD",
@@ -29,7 +33,7 @@ describe("SQLCipher executable spike", () => {
     await execFileAsync(process.execPath, [require.resolve("tsx/cli"), "scripts/run-sqlcipher-spike.ts"], {
       cwd: path.resolve(import.meta.dirname, ".."),
       env: environment,
-      timeout: 30_000,
+      timeout: 180_000,
     });
 
     const report = parseSpikeReport(
@@ -48,10 +52,15 @@ describe("SQLCipher executable spike", () => {
     expect(report.plaintextHits).toEqual([]);
     expect(report.crashArtifactsClean).toBe(true);
     expect(report.backupRoundTrip).toBe(true);
+    expect(report.packagedNativeLoad).toBe(true);
+    expect(report.cipherImplementation).toBe("better-sqlite3-multiple-ciphers");
+    expect(report.cipherMode).toBe("sqlcipher-legacy-4");
+    expect(report.bindingVersion).toBe("12.11.1");
+    expect(report.sqlCipher4Compatibility).toBe(false);
     expect(
       (await readdir(tmpdir()))
         .filter((name) => name.startsWith("pwm-sqlcipher-spike-"))
         .sort(),
     ).toEqual(temporaryRootsBefore);
-  });
+  }, 180_000);
 });

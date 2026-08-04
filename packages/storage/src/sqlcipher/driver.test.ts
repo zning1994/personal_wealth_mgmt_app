@@ -13,6 +13,23 @@ afterEach(async () => {
 });
 
 describe("SQLCipher hard gate", () => {
+  it("opens only in SQLCipher legacy-4 mode", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pwm-sqlcipher-mode-"));
+    temporaryRoots.push(root);
+    const db = await openSqlCipher({
+      filePath: path.join(root, "workspace.db"),
+      key: randomBytes(32),
+      mode: "read-write",
+    });
+
+    expect(await db.get<{ sqlcipher: string }>("PRAGMA cipher")).toEqual({ sqlcipher: "sqlcipher" });
+    expect(Object.values((await db.get<Record<string, unknown>>("PRAGMA legacy")) ?? {})).toEqual([
+      "4",
+    ]);
+    expect(await db.all<Record<string, unknown>>("PRAGMA cipher_integrity_check")).toEqual([]);
+    await db.close();
+  });
+
   it("rejects the wrong key and leaves no UTF-8 or UTF-16LE canary", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pwm-sqlcipher-"));
     temporaryRoots.push(root);
@@ -55,6 +72,26 @@ describe("SQLCipher hard gate", () => {
     ).rejects.toThrow("synthetic-failure");
 
     expect(await db.all<{ value: string }>("SELECT value FROM probe")).toEqual([]);
+    await db.close();
+  });
+
+  it("rejects non-reader SQL passed to all without executing it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pwm-sqlcipher-query-"));
+    temporaryRoots.push(root);
+    const db = await openSqlCipher({
+      filePath: path.join(root, "workspace.db"),
+      key: randomBytes(32),
+      mode: "read-write",
+    });
+
+    await expect(db.all("CREATE TABLE must_not_exist (value TEXT)")).rejects.toThrow(
+      "sqlcipher-query-does-not-return-data",
+    );
+    expect(
+      await db.get<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='must_not_exist'",
+      ),
+    ).toBeUndefined();
     await db.close();
   });
 
