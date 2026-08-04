@@ -31,6 +31,10 @@ importers:
         version: 2.1.9(@types/node@22.20.1)
 
   apps/desktop:
+    dependencies:
+      '@pwm/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
     devDependencies:
       electron:
         specifier: 43.2.0
