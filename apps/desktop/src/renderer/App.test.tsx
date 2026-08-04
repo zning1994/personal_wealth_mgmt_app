@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 
+import { StrictMode } from "react";
 import { act, render, screen } from "@testing-library/react";
 import type { AppInfo } from "@pwm/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DesktopShellApi } from "../preload/api";
 import { App } from "./App";
+import { createI18n } from "./i18n";
 import { installWealthApi } from "./test-setup";
+
+vi.mock("./i18n", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./i18n")>();
+  return { ...actual, createI18n: vi.fn(actual.createI18n) };
+});
+
+const createI18nMock = vi.mocked(createI18n);
 
 function createApi(
   getAppInfo: DesktopShellApi["getAppInfo"],
@@ -117,6 +126,78 @@ describe("App", () => {
     expect(consoleError).not.toHaveBeenCalledWith(
       expect.stringContaining("act("),
     );
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("reuses locale state on same-locale rerenders and switches intentionally", async () => {
+    createI18nMock.mockClear();
+    const api = createApi(
+      vi.fn().mockResolvedValue({
+        name: "Personal Wealth",
+        version: "0.1.0",
+        platform: "darwin",
+      }),
+    );
+    installWealthApi(api);
+    const view = render(<App locale="en" />);
+
+    expect(
+      await screen.findByText("The local app started safely"),
+    ).toBeVisible();
+    const initialInstanceCount = createI18nMock.mock.calls.length;
+    expect(initialInstanceCount).toBeGreaterThan(0);
+
+    view.rerender(<App locale="en" />);
+
+    expect(createI18nMock).toHaveBeenCalledTimes(initialInstanceCount);
+    expect(screen.getByText("The local app started safely")).toBeVisible();
+    expect(api.getAppInfo).toHaveBeenCalledOnce();
+
+    view.rerender(<App locale="zh-CN" />);
+
+    expect(createI18nMock.mock.calls.length).toBeGreaterThan(
+      initialInstanceCount,
+    );
+    expect(
+      screen.getByRole("heading", { level: 1, name: "个人财富" }),
+    ).toBeVisible();
+  });
+
+  it("does not accumulate locale or preload work across StrictMode rerenders", async () => {
+    createI18nMock.mockClear();
+    const api = createApi(
+      vi.fn().mockResolvedValue({
+        name: "Personal Wealth",
+        version: "0.1.0",
+        platform: "win32",
+      }),
+    );
+    installWealthApi(api);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const renderStrictApp = () => (
+      <StrictMode>
+        <App locale="en" />
+      </StrictMode>
+    );
+    const view = render(renderStrictApp());
+
+    expect(
+      await screen.findByText("The local app started safely"),
+    ).toBeVisible();
+    const initialInstanceCount = createI18nMock.mock.calls.length;
+    const initialPreloadCount = vi.mocked(api.getAppInfo).mock.calls.length;
+    expect(initialInstanceCount).toBeGreaterThan(0);
+    expect(initialPreloadCount).toBeGreaterThan(0);
+
+    view.rerender(renderStrictApp());
+
+    expect(createI18nMock).toHaveBeenCalledTimes(initialInstanceCount);
+    expect(api.getAppInfo).toHaveBeenCalledTimes(initialPreloadCount);
+    view.unmount();
+    await act(async () => Promise.resolve());
     expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });

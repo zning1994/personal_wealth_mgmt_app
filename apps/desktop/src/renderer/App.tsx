@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import { I18nextProvider, useTranslation } from "react-i18next";
 import type { AppInfo } from "@pwm/contracts";
 import { createI18n, type SupportedLocale } from "./i18n";
@@ -130,8 +130,10 @@ function Shell({ locale }: AppProps): JSX.Element {
 }
 
 export function App({ locale }: AppProps): JSX.Element {
+  const i18n = useMemo(() => createI18n(locale), [locale]);
+
   return (
-    <I18nextProvider i18n={createI18n(locale)}>
+    <I18nextProvider i18n={i18n}>
       <Shell locale={locale} />
     </I18nextProvider>
   );
