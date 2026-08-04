@@ -21,8 +21,9 @@ vi.mock("electron", () => ({
 }));
 
 import {
-  asarArchivePath,
+  closeAssetHandles,
   contentTypeForAsset,
+  findPhysicalAsarArchive,
   installApplicationProtocol,
   readVerifiedRendererAsset,
   registerApplicationProtocolScheme,
@@ -123,19 +124,135 @@ describe("app protocol", () => {
   });
 
   it.each([
-    [
-      "/Applications/Personal Wealth.app/Contents/Resources/app.asar/out/renderer/index.html",
-      "/Applications/Personal Wealth.app/Contents/Resources/app.asar",
-    ],
-    [
-      "C:\\Program Files\\Personal Wealth\\resources\\app.asar\\out\\renderer\\index.html",
-      "C:\\Program Files\\Personal Wealth\\resources\\app.asar",
-    ],
-    ["/repo/apps/desktop/out/renderer/index.html", undefined],
-    ["/repo/app.asar.unpacked/renderer/index.html", undefined],
-  ])("finds the containing ASAR archive for %s", (assetPath, expected) => {
-    expect(asarArchivePath(assetPath)).toBe(expected);
-  });
+    {
+      name: "POSIX parent directory named .asar",
+      assetPath: "/repo/cache.asar/out/renderer/index.html",
+      entries: { "/repo/cache.asar": "directory" },
+      expected: undefined,
+    },
+    {
+      name: "POSIX multiple .asar segments",
+      assetPath: "/repo/cache.asar/build/app.asar/out/renderer/index.html",
+      entries: {
+        "/repo/cache.asar": "directory",
+        "/repo/cache.asar/build/app.asar": "file",
+      },
+      expected: "/repo/cache.asar/build/app.asar",
+    },
+    {
+      name: "POSIX physical archive",
+      assetPath:
+        "/Applications/Personal Wealth.app/resources/app.asar/out/index.html",
+      entries: {
+        "/Applications/Personal Wealth.app/resources/app.asar": "file",
+      },
+      expected: "/Applications/Personal Wealth.app/resources/app.asar",
+    },
+    {
+      name: "POSIX no archive candidate",
+      assetPath: "/repo/apps/desktop/out/renderer/index.html",
+      entries: {},
+      expected: undefined,
+    },
+    {
+      name: "Windows parent directory named .asar",
+      assetPath: "C:\\repo\\cache.asar\\out\\renderer\\index.html",
+      entries: { "C:\\repo\\cache.asar": "directory" },
+      expected: undefined,
+    },
+    {
+      name: "Windows multiple .asar segments",
+      assetPath:
+        "C:\\repo\\cache.asar\\build\\app.asar\\out\\renderer\\index.html",
+      entries: {
+        "C:\\repo\\cache.asar": "directory",
+        "C:\\repo\\cache.asar\\build\\app.asar": "file",
+      },
+      expected: "C:\\repo\\cache.asar\\build\\app.asar",
+    },
+    {
+      name: "Windows physical archive after a symlink candidate",
+      assetPath:
+        "C:\\repo\\linked.asar\\build\\app.asar\\out\\renderer\\index.html",
+      entries: {
+        "C:\\repo\\linked.asar": "symlink",
+        "C:\\repo\\linked.asar\\build\\app.asar": "file",
+      },
+      expected: "C:\\repo\\linked.asar\\build\\app.asar",
+    },
+    {
+      name: "Windows physical archive",
+      assetPath:
+        "C:\\Program Files\\Personal Wealth\\resources\\app.asar\\out\\index.html",
+      entries: {
+        "C:\\Program Files\\Personal Wealth\\resources\\app.asar": "file",
+      },
+      expected: "C:\\Program Files\\Personal Wealth\\resources\\app.asar",
+    },
+    {
+      name: "Windows no archive candidate",
+      assetPath: "C:\\repo\\apps\\desktop\\out\\renderer\\index.html",
+      entries: {},
+      expected: undefined,
+    },
+  ])(
+    "selects only a physical archive: $name",
+    async ({ assetPath, entries, expected }) => {
+      const physicalLstat = vi.fn(async (candidate: string) => {
+        const kind = entries[candidate as keyof typeof entries];
+        if (kind === undefined) {
+          const error = new Error("not found") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }
+        return {
+          isFile: () => kind === "file",
+          isSymbolicLink: () => kind === "symlink",
+        };
+      });
+
+      await expect(
+        findPhysicalAsarArchive(assetPath, physicalLstat as never),
+      ).resolves.toBe(expected);
+      if (!assetPath.toLowerCase().includes(".asar")) {
+        expect(physicalLstat).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each([
+    ["asset close failure", true, false],
+    ["archive close failure", false, true],
+    ["both close failures", true, true],
+  ])(
+    "closes both handles and masks %s",
+    async (_name, assetFails, archiveFails) => {
+      const assetHandle = {
+        close: vi
+          .fn()
+          .mockImplementation(() =>
+            assetFails
+              ? Promise.reject(new Error("asset close detail"))
+              : Promise.resolve(),
+          ),
+      };
+      const archiveHandle = {
+        close: vi
+          .fn()
+          .mockImplementation(() =>
+            archiveFails
+              ? Promise.reject(new Error("archive close detail"))
+              : Promise.resolve(),
+          ),
+      };
+
+      await expect(
+        closeAssetHandles(assetHandle, archiveHandle),
+      ).rejects.toThrow("Application asset URL is not allowed");
+      expect(assetHandle.close).toHaveBeenCalledOnce();
+      expect(archiveHandle.close).toHaveBeenCalledOnce();
+    },
+  );
 
   it("reads an existing regular asset from its verified file handle", async () => {
     const asset = await readVerifiedRendererAsset(
@@ -150,6 +267,18 @@ describe("app protocol", () => {
         rendererRoot,
       ),
     ).rejects.toThrow("Application asset URL is not allowed");
+  });
+
+  it("treats a physical .asar directory as an ordinary development path", async () => {
+    const developmentRoot = path.join(fixtureRoot, "cache.asar", "renderer");
+    mkdirSync(developmentRoot, { recursive: true });
+    writeFileSync(path.join(developmentRoot, "index.html"), "development");
+
+    const asset = await readVerifiedRendererAsset(
+      "app://desktop/index.html",
+      developmentRoot,
+    );
+    expect(Buffer.from(asset.body).toString("utf8")).toBe("development");
   });
 
   const symlinkIt = fileSymlinkSkipReason === undefined ? it : it.skip;

@@ -68,18 +68,54 @@ function isContainedFile(
   );
 }
 
-export function asarArchivePath(assetPath: string): string | undefined {
-  return /^(.*?\.asar)(?=[\\/]|$)/i.exec(assetPath)?.[1];
+function asarArchiveCandidates(assetPath: string): string[] {
+  const pathApi = pathImplementation(assetPath);
+  const root = pathApi.parse(assetPath).root;
+  const relativeSegments = assetPath
+    .slice(root.length)
+    .split(pathApi === path.win32 ? /[\\/]/ : "/")
+    .filter(Boolean);
+  const candidates: string[] = [];
+  let current = root;
+  for (const segment of relativeSegments) {
+    current = pathApi.join(current, segment);
+    if (segment.toLowerCase().endsWith(".asar")) candidates.push(current);
+  }
+  return candidates;
 }
 
-function isAsarPath(assetPath: string): boolean {
-  return asarArchivePath(assetPath) !== undefined;
+type PhysicalLstat = (
+  pathname: string,
+) => Promise<{ isFile(): boolean; isSymbolicLink(): boolean }>;
+
+const physicalLstat: PhysicalLstat = (pathname) =>
+  originalFs.promises.lstat(pathname);
+
+export async function findPhysicalAsarArchive(
+  assetPath: string,
+  lstatPhysical: PhysicalLstat = physicalLstat,
+): Promise<string | undefined> {
+  for (const candidate of asarArchiveCandidates(assetPath)) {
+    let metadata: Awaited<ReturnType<PhysicalLstat>>;
+    try {
+      metadata = await lstatPhysical(candidate);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      throw error;
+    }
+    if (!metadata.isSymbolicLink() && metadata.isFile()) return candidate;
+  }
+  return undefined;
 }
 
-function isNoFollowUnsupported(error: unknown, assetPath: string): boolean {
+function isNoFollowUnsupported(
+  error: unknown,
+  allowVerifiedAsarFallback: boolean,
+): boolean {
   const code = (error as NodeJS.ErrnoException).code;
   return (
-    (process.platform === "win32" || isAsarPath(assetPath)) &&
+    (process.platform === "win32" || allowVerifiedAsarFallback) &&
     (code === "EINVAL" ||
       code === "ENOTSUP" ||
       code === "ENOSYS" ||
@@ -87,18 +123,37 @@ function isNoFollowUnsupported(error: unknown, assetPath: string): boolean {
   );
 }
 
-async function openReadOnlyNoFollow(assetPath: string) {
+async function openReadOnlyNoFollow(
+  assetPath: string,
+  allowVerifiedAsarFallback: boolean,
+) {
   const noFollow = constants.O_NOFOLLOW ?? 0;
   if (noFollow === 0) return open(assetPath, constants.O_RDONLY);
 
   try {
     return await open(assetPath, constants.O_RDONLY | noFollow);
   } catch (error) {
-    if (!isNoFollowUnsupported(error, assetPath)) throw error;
+    if (!isNoFollowUnsupported(error, allowVerifiedAsarFallback)) throw error;
     // Windows and Electron's virtual ASAR filesystem may not implement
     // O_NOFOLLOW. The post-open lstat/realpath/fstat identity checks below
     // remain mandatory when this explicit compatibility fallback is used.
     return open(assetPath, constants.O_RDONLY);
+  }
+}
+
+type ClosableHandle = { close(): Promise<unknown> };
+
+export async function closeAssetHandles(
+  assetHandle: ClosableHandle | undefined,
+  archiveHandle: ClosableHandle | undefined,
+): Promise<void> {
+  const closeResults = await Promise.allSettled(
+    [assetHandle, archiveHandle]
+      .filter((handle): handle is ClosableHandle => handle !== undefined)
+      .map((handle) => Promise.resolve().then(() => handle.close())),
+  );
+  if (closeResults.some((result) => result.status === "rejected")) {
+    return rejectAssetUrl();
   }
 }
 
@@ -145,7 +200,7 @@ async function openVerifiedAsarArchive(
         originalFs.constants.O_RDONLY | noFollow,
       );
     } catch (error) {
-      if (!isNoFollowUnsupported(error, archivePath)) throw error;
+      if (!isNoFollowUnsupported(error, false)) throw error;
       archiveHandle = await originalFs.promises.open(
         archivePath,
         originalFs.constants.O_RDONLY,
@@ -154,7 +209,7 @@ async function openVerifiedAsarArchive(
     await assertAsarArchiveIdentity(archivePath, archiveHandle);
     return archiveHandle;
   } catch (error) {
-    await archiveHandle?.close();
+    await closeAssetHandles(undefined, archiveHandle);
     throw error;
   }
 }
@@ -256,11 +311,14 @@ export async function readVerifiedRendererAsset(
   try {
     const canonicalRoot = await canonicalRendererRoot(rendererRoot);
     const assetPath = resolveRendererAsset(requestUrl, canonicalRoot);
-    const expectedArchivePath = asarArchivePath(assetPath);
+    const expectedArchivePath = await findPhysicalAsarArchive(assetPath);
     if (expectedArchivePath !== undefined) {
       archiveHandle = await openVerifiedAsarArchive(expectedArchivePath);
     }
-    handle = await openReadOnlyNoFollow(assetPath);
+    handle = await openReadOnlyNoFollow(
+      assetPath,
+      expectedArchivePath !== undefined,
+    );
 
     const descriptorMetadata = await handle.stat();
     if (!descriptorMetadata.isFile()) return rejectAssetUrl();
@@ -274,7 +332,7 @@ export async function readVerifiedRendererAsset(
 
     const followedPathMetadata = await stat(assetPath);
     if (!followedPathMetadata.isFile()) return rejectAssetUrl();
-    const archivePath = asarArchivePath(canonicalAsset);
+    const archivePath = await findPhysicalAsarArchive(canonicalAsset);
     if (archivePath === undefined) {
       if (
         followedPathMetadata.dev !== descriptorMetadata.dev ||
@@ -307,11 +365,7 @@ export async function readVerifiedRendererAsset(
   } catch {
     return rejectAssetUrl();
   } finally {
-    try {
-      await handle?.close();
-    } finally {
-      await archiveHandle?.close();
-    }
+    await closeAssetHandles(handle, archiveHandle);
   }
 }
 
