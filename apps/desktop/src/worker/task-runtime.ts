@@ -89,8 +89,15 @@ export function createTaskRuntime(
       if (active.has(request.taskId) || terminal.has(request.taskId)) return;
 
       if (pendingCancellation.delete(request.taskId)) {
+        let terminalSent = false;
         try {
           sendValidatedResponse(send, { type: "error", taskId: request.taskId, code: "cancelled" });
+          terminalSent = true;
+        } catch {
+          if (!terminalSent) {
+            sendValidatedResponse(send, { type: "error", taskId: request.taskId, code: "worker-failure" });
+            terminalSent = true;
+          }
         } finally {
           rememberBounded(terminal, request.taskId, terminalCapacity);
         }
@@ -107,8 +114,9 @@ export function createTaskRuntime(
         sendValidatedResponse(send, { type: "progress", progress });
         await waitForTurn(controller.signal);
         if (controller.signal.aborted) {
-          terminalSent = true;
+          // A synchronous MessagePort failure means this terminal message was not delivered.
           sendValidatedResponse(send, { type: "error", taskId, code: "cancelled" });
+          terminalSent = true;
           return;
         }
 
@@ -116,16 +124,16 @@ export function createTaskRuntime(
           type: "progress",
           progress: { ...progress, phase: "completed", completed: 1 },
         });
-        terminalSent = true;
         sendValidatedResponse(send, {
           type: "result",
           taskId,
           result: { echo: request.task.payload.echo },
         });
+        terminalSent = true;
       } catch {
         if (!terminalSent) {
-          terminalSent = true;
           sendValidatedResponse(send, { type: "error", taskId, code: "worker-failure" });
+          terminalSent = true;
         }
       } finally {
         active.delete(taskId);

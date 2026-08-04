@@ -77,6 +77,17 @@ export class TaskCoordinator {
   dispose(): void {
     if (this.disposed) return;
 
+    for (const taskId of this.active) {
+      if (this.cancellationRequested.has(taskId)) continue;
+
+      this.cancellationRequested.add(taskId);
+      try {
+        this.port.postMessage({ type: "cancel", taskId });
+      } catch {
+        // Disposal is best-effort: keep shutting down after a transport failure.
+      }
+    }
+
     this.disposed = true;
     this.unsubscribe?.();
     this.unsubscribe = undefined;

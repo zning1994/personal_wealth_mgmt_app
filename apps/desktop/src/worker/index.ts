@@ -1,4 +1,4 @@
-import { attachUtilityWorkerPort } from "./task-runtime";
+import { attachProductionUtilityWorker } from "./entrypoint";
 
 type UtilityParentPort = {
   postMessage(message: unknown): void;
@@ -11,7 +11,7 @@ if (!parentPort) {
   throw new Error("Utility worker requires process.parentPort");
 }
 
-attachUtilityWorkerPort({
+attachProductionUtilityWorker({
   postMessage: (message) => parentPort.postMessage(message),
   onMessage: (listener) => {
     parentPort.on("message", listener);

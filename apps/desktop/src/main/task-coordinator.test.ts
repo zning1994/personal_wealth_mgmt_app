@@ -204,4 +204,27 @@ describe("TaskCoordinator", () => {
     expect(publish).not.toHaveBeenCalled();
     expect(coordinator.diagnosticCounts()).toEqual({ active: 0, issued: 1, cancellationRequested: 0 });
   });
+
+  it("best-effort cancels each active task once before disposing", () => {
+    const utility = createPort();
+    const firstId = "018f4f7e-8ead-7c0d-8000-000000000026" as TaskId;
+    const secondId = "018f4f7e-8ead-7c0d-8000-000000000027" as TaskId;
+    const ids = [firstId, secondId];
+    const coordinator = new TaskCoordinator(utility.port, vi.fn(), () => ids.shift() as TaskId);
+    coordinator.start(taskInput);
+    coordinator.start(taskInput);
+    coordinator.cancel({ taskId: firstId });
+
+    coordinator.dispose();
+    coordinator.dispose();
+
+    const cancellationMessages = utility.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === "cancel");
+    expect(cancellationMessages).toEqual([
+      { type: "cancel", taskId: firstId },
+      { type: "cancel", taskId: secondId },
+    ]);
+    expect(utility.unsubscribe).toHaveBeenCalledOnce();
+  });
 });

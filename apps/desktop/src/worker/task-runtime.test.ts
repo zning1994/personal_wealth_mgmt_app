@@ -130,6 +130,69 @@ describe("task runtime", () => {
       taskId: currentTaskId,
       result: { echo: "ok" },
     });
+    expect(
+      transport.responses.filter(
+        (message) =>
+          JSON.stringify(message) ===
+          JSON.stringify({ type: "error", taskId: currentTaskId, code: "worker-failure" }),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("reports one worker failure when result delivery throws before the terminal is delivered", async () => {
+    const messages: unknown[] = [];
+    const send = vi.fn((message) => {
+      if (message.type === "result") throw new Error("result was not delivered");
+      messages.push(message);
+    });
+    const runtime = createTaskRuntime(send);
+    const currentTaskId = taskId("13");
+
+    await runtime.receive(start(currentTaskId));
+
+    expect(messages).toContainEqual({
+      type: "error",
+      taskId: currentTaskId,
+      code: "worker-failure",
+    });
+    expect(
+      messages.filter(
+        (message) =>
+          JSON.stringify(message) ===
+          JSON.stringify({ type: "error", taskId: currentTaskId, code: "worker-failure" }),
+      ),
+    ).toHaveLength(1);
+    expect(runtime.activeCount()).toBe(0);
+  });
+
+  it("reports one worker failure when cancelled delivery throws before the terminal is delivered", async () => {
+    const messages: unknown[] = [];
+    const send = vi.fn((message) => {
+      if (message.type === "error" && message.code === "cancelled") {
+        throw new Error("cancelled was not delivered");
+      }
+      messages.push(message);
+    });
+    const runtime = createTaskRuntime(send);
+    const currentTaskId = taskId("14");
+
+    const running = runtime.receive(start(currentTaskId));
+    await runtime.receive({ type: "cancel", taskId: currentTaskId });
+    await running;
+
+    expect(messages).toContainEqual({
+      type: "error",
+      taskId: currentTaskId,
+      code: "worker-failure",
+    });
+    expect(
+      messages.filter(
+        (message) =>
+          JSON.stringify(message) ===
+          JSON.stringify({ type: "error", taskId: currentTaskId, code: "worker-failure" }),
+      ),
+    ).toHaveLength(1);
+    expect(runtime.activeCount()).toBe(0);
   });
 
   it("keeps terminal and pending-cancellation retention bounded while preserving recent duplicates", async () => {
