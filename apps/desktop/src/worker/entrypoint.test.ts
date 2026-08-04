@@ -82,4 +82,23 @@ describe("production utility worker entrypoint", () => {
     expect(events[1]).toBe("start");
     expect(events[2]).toBe(JSON.stringify({ type: "pwm:utility-ready" }));
   });
+
+  it("does not announce readiness when the transferred port cannot start", () => {
+    let transferListener: ((event: { ports: unknown[] }) => void) | undefined;
+    const responses: unknown[] = [];
+    const parentPort = { once: (_event: "message", listener: (event: { ports: unknown[] }) => void) => (transferListener = listener) };
+    const port = {
+      postMessage: (message: unknown) => responses.push(message),
+      on: () => undefined,
+      off: () => undefined,
+      start: () => {
+        throw new Error("start failed");
+      },
+    };
+
+    attachTransferredUtilityWorker(parentPort);
+
+    expect(() => transferListener?.({ ports: [port] })).toThrow("start failed");
+    expect(responses).toEqual([]);
+  });
 });

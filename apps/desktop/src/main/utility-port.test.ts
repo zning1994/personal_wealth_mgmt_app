@@ -22,6 +22,9 @@ function createPort() {
     emit(event: string, ...args: unknown[]) {
       for (const listener of listeners.get(event) ?? []) listener(...args);
     },
+    listenerCount(event: string) {
+      return listeners.get(event)?.size ?? 0;
+    },
   };
 }
 
@@ -39,6 +42,9 @@ function createChild() {
     }),
     emit(event: string, ...args: unknown[]) {
       for (const listener of listeners.get(event) ?? []) listener(...args);
+    },
+    listenerCount(event: string) {
+      return listeners.get(event)?.size ?? 0;
     },
   };
 }
@@ -82,7 +88,7 @@ describe("createUtilityPort", () => {
     expect(mainPort.off).not.toHaveBeenCalledWith("message", expect.any(Function));
   });
 
-  it("fails sends and notifies subscribers when the child exits", () => {
+  it("rejects readiness, fails sends and removes exact listeners when the child exits", async () => {
     const mainPort = createPort();
     const workerPort = createPort();
     const child = createChild();
@@ -90,16 +96,28 @@ describe("createUtilityPort", () => {
     const utility = createUtilityPort(child as never);
     const disconnected = vi.fn();
     utility.onDisconnect?.(disconnected);
+    const ready = utility.ready();
+    const messageListener = mainPort.on.mock.calls.find(([event]) => event === "message")?.[1];
+    const closeListener = mainPort.on.mock.calls.find(([event]) => event === "close")?.[1];
+    const exitListener = child.on.mock.calls.find(([event]) => event === "exit")?.[1];
+    const errorListener = child.on.mock.calls.find(([event]) => event === "error")?.[1];
 
     child.emit("exit", 1);
 
+    await expect(ready).rejects.toThrow("Utility process transport is unavailable");
     expect(disconnected).toHaveBeenCalledOnce();
     expect(() => utility.postMessage({ type: "cancel", taskId: "018f4f7e-8ead-7c0d-8000-000000000202" as never })).toThrow(
       "Utility process transport is unavailable",
     );
     expect(mainPort.close).toHaveBeenCalledOnce();
-    expect(child.off).toHaveBeenCalledWith("exit", expect.any(Function));
-    expect(child.off).toHaveBeenCalledWith("error", expect.any(Function));
+    expect(mainPort.off).toHaveBeenCalledWith("message", messageListener);
+    expect(mainPort.off).toHaveBeenCalledWith("close", closeListener);
+    expect(child.off).toHaveBeenCalledWith("exit", exitListener);
+    expect(child.off).toHaveBeenCalledWith("error", errorListener);
+    expect(mainPort.listenerCount("message")).toBe(0);
+    expect(mainPort.listenerCount("close")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+    expect(child.listenerCount("error")).toBe(0);
   });
 
   it("fails sends and notifies subscribers when the MessagePort closes", () => {
@@ -137,10 +155,18 @@ describe("createUtilityPort", () => {
     mainPort.start.mockImplementation(() => { throw new Error("start failed"); });
     messageChannelMain.mockReturnValue({ port1: mainPort, port2: workerPort });
     expect(() => createUtilityPort(child as never)).toThrow("start failed");
-    expect(mainPort.off).toHaveBeenCalledWith("message", expect.any(Function));
-    expect(mainPort.off).toHaveBeenCalledWith("close", expect.any(Function));
-    expect(child.off).toHaveBeenCalledWith("exit", expect.any(Function));
-    expect(child.off).toHaveBeenCalledWith("error", expect.any(Function));
+    const messageListener = mainPort.on.mock.calls.find(([event]) => event === "message")?.[1];
+    const closeListener = mainPort.on.mock.calls.find(([event]) => event === "close")?.[1];
+    const exitListener = child.on.mock.calls.find(([event]) => event === "exit")?.[1];
+    const errorListener = child.on.mock.calls.find(([event]) => event === "error")?.[1];
+    expect(mainPort.off).toHaveBeenCalledWith("message", messageListener);
+    expect(mainPort.off).toHaveBeenCalledWith("close", closeListener);
+    expect(child.off).toHaveBeenCalledWith("exit", exitListener);
+    expect(child.off).toHaveBeenCalledWith("error", errorListener);
+    expect(mainPort.listenerCount("message")).toBe(0);
+    expect(mainPort.listenerCount("close")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+    expect(child.listenerCount("error")).toBe(0);
     expect(mainPort.close).toHaveBeenCalledOnce();
     expect(workerPort.close).toHaveBeenCalledOnce();
   });

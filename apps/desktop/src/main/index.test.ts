@@ -10,9 +10,13 @@ const {
   createUtilityPort,
   registerCommandHandlers,
   taskCoordinator,
-  coordinator,
+  coordinators,
 } = vi.hoisted(() => {
-  const coordinator = { start: vi.fn(), cancel: vi.fn(), dispose: vi.fn() };
+  const coordinators: Array<{
+    start: ReturnType<typeof vi.fn>;
+    cancel: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+  }> = [];
   return {
     app: { getAppPath: vi.fn(), getVersion: vi.fn(), whenReady: vi.fn(), once: vi.fn() },
     ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
@@ -22,8 +26,12 @@ const {
     installWindowSecurity: vi.fn(),
     createUtilityPort: vi.fn(),
     registerCommandHandlers: vi.fn(),
-    taskCoordinator: vi.fn(() => coordinator),
-    coordinator,
+    taskCoordinator: vi.fn(() => {
+      const coordinator = { start: vi.fn(), cancel: vi.fn(), dispose: vi.fn() };
+      coordinators.push(coordinator);
+      return coordinator;
+    }),
+    coordinators,
   };
 });
 
@@ -34,48 +42,281 @@ vi.mock("./utility-port", () => ({ createUtilityPort }));
 vi.mock("./ipc", () => ({ registerCommandHandlers }));
 vi.mock("./task-coordinator", () => ({ TaskCoordinator: taskCoordinator }));
 
-import { startDesktop } from "./index";
+function childDouble() {
+  return { kill: vi.fn() };
+}
+
+function portDouble(ready: Promise<void> = Promise.resolve()) {
+  return { dispose: vi.fn(), ready: vi.fn(() => ready) };
+}
+
+function windowDouble() {
+  let destroyed = false;
+  return {
+    destroy: vi.fn(() => {
+      destroyed = true;
+    }),
+    isDestroyed: vi.fn(() => destroyed),
+    webContents: { send: vi.fn() },
+  };
+}
+
+async function loadStartDesktop() {
+  // @ts-expect-error Vitest executes this isolated ESM module despite the workspace's script module target.
+  return (await import("./index")).startDesktop;
+}
+
+function beforeQuitCallback(): () => void {
+  const callback = app.once.mock.calls.find(([event]) => event === "before-quit")?.[1] as (() => void) | undefined;
+  expect(callback).toBeTypeOf("function");
+  return callback as () => void;
+}
 
 describe("startDesktop", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
+    coordinators.splice(0);
     app.getAppPath.mockReturnValue("/app");
     app.getVersion.mockReturnValue("0.1.0");
     app.whenReady.mockResolvedValue(undefined);
-    const child = { kill: vi.fn() };
-    utilityProcess.fork.mockReturnValue(child);
-    createUtilityPort.mockReturnValue({ dispose: vi.fn(), ready: vi.fn().mockResolvedValue(undefined) });
-    createMainWindow.mockReturnValue({
-      destroy: vi.fn(),
-      isDestroyed: () => false,
-      webContents: { send: vi.fn() },
-    });
-    registerCommandHandlers.mockReturnValue(vi.fn());
+    app.once.mockImplementation(() => undefined);
+    utilityProcess.fork.mockImplementation(() => childDouble());
+    createUtilityPort.mockImplementation(() => portDouble());
+    createMainWindow.mockImplementation(() => windowDouble());
+    registerCommandHandlers.mockImplementation(() => vi.fn());
   });
 
-  it("installs security before creating one window and one bundled utility worker", async () => {
+  it("does not create handlers or a window before the utility process is ready", async () => {
     const ordering: string[] = [];
+    let resolveReady: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
     installWindowSecurity.mockImplementation(() => ordering.push("security"));
     utilityProcess.fork.mockImplementation(() => {
       ordering.push("fork");
-      return { kill: vi.fn() };
+      return childDouble();
     });
     createMainWindow.mockImplementation(() => {
       ordering.push("window");
-      return { destroy: vi.fn(), isDestroyed: () => false, webContents: { send: vi.fn() } };
+      return windowDouble();
     });
+    createUtilityPort.mockReturnValue(portDouble(ready));
+    const startDesktop = await loadStartDesktop();
+
+    const starting = startDesktop();
+    await vi.waitFor(() => expect(createUtilityPort).toHaveBeenCalledOnce());
+
+    expect(taskCoordinator).not.toHaveBeenCalled();
+    expect(registerCommandHandlers).not.toHaveBeenCalled();
+    expect(createMainWindow).not.toHaveBeenCalled();
+    expect(ordering).toEqual(["security", "fork"]);
+
+    resolveReady?.();
+    await starting;
+    expect(taskCoordinator).toHaveBeenCalledOnce();
+    expect(registerCommandHandlers).toHaveBeenCalledOnce();
+    expect(createMainWindow).toHaveBeenCalledOnce();
+    expect(ordering).toEqual(["security", "fork", "window"]);
+  });
+
+  it("times out at 5000ms, clears resources and timers, and never creates downstream state", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = childDouble();
+      const port = portDouble(new Promise<void>(() => undefined));
+      const retryChild = childDouble();
+      const retryPort = portDouble();
+      utilityProcess.fork.mockReturnValueOnce(child).mockReturnValueOnce(retryChild);
+      createUtilityPort.mockReturnValueOnce(port).mockReturnValueOnce(retryPort);
+      const startDesktop = await loadStartDesktop();
+
+      const starting = startDesktop();
+      const rejected = expect(starting).rejects.toThrow("Utility process readiness timed out");
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(port.dispose).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+
+      expect(port.dispose).toHaveBeenCalledOnce();
+      expect(child.kill).toHaveBeenCalledOnce();
+      expect(taskCoordinator).not.toHaveBeenCalled();
+      expect(registerCommandHandlers).not.toHaveBeenCalled();
+      expect(createMainWindow).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+
+      await expect(startDesktop()).resolves.toBeUndefined();
+      expect(utilityProcess.fork).toHaveBeenCalledTimes(2);
+      expect(retryChild.kill).not.toHaveBeenCalled();
+      expect(retryPort.dispose).not.toHaveBeenCalled();
+      expect(taskCoordinator).toHaveBeenCalledOnce();
+      expect(registerCommandHandlers).toHaveBeenCalledOnce();
+      expect(createMainWindow).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cleans an early utility readiness rejection and retries with a fresh child in the same module", async () => {
+    const failedChild = childDouble();
+    let rejectReady: ((error: Error) => void) | undefined;
+    const failedReady = new Promise<void>((_resolve, reject) => {
+      rejectReady = reject;
+    });
+    const failedPort = portDouble(failedReady);
+    const healthyChild = childDouble();
+    const healthyPort = portDouble();
+    utilityProcess.fork.mockReturnValueOnce(failedChild).mockReturnValueOnce(healthyChild);
+    createUtilityPort.mockReturnValueOnce(failedPort).mockReturnValueOnce(healthyPort);
+    const startDesktop = await loadStartDesktop();
+
+    const firstStart = startDesktop();
+    const rejected = expect(firstStart).rejects.toThrow("Utility process transport is unavailable");
+    rejectReady?.(new Error("Utility process transport is unavailable"));
+    await rejected;
+    expect(failedPort.dispose).toHaveBeenCalledOnce();
+    expect(failedChild.kill).toHaveBeenCalledOnce();
+    expect(taskCoordinator).not.toHaveBeenCalled();
+    expect(registerCommandHandlers).not.toHaveBeenCalled();
+    expect(createMainWindow).not.toHaveBeenCalled();
+
+    await expect(startDesktop()).resolves.toBeUndefined();
+    expect(utilityProcess.fork).toHaveBeenCalledTimes(2);
+    expect(healthyChild.kill).not.toHaveBeenCalled();
+    expect(healthyPort.dispose).not.toHaveBeenCalled();
+    expect(taskCoordinator).toHaveBeenCalledOnce();
+    expect(registerCommandHandlers).toHaveBeenCalledOnce();
+    expect(createMainWindow).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back a handler-registration failure and retries without downstream or handler accumulation", async () => {
+    const failedChild = childDouble();
+    const failedPort = portDouble();
+    const successfulChild = childDouble();
+    const successfulPort = portDouble();
+    const successfulUnregister = vi.fn();
+    utilityProcess.fork.mockReturnValueOnce(failedChild).mockReturnValueOnce(successfulChild);
+    createUtilityPort.mockReturnValueOnce(failedPort).mockReturnValueOnce(successfulPort);
+    registerCommandHandlers
+      .mockImplementationOnce(() => {
+        throw new Error("registration failed");
+      })
+      .mockReturnValueOnce(successfulUnregister);
+    const startDesktop = await loadStartDesktop();
+
+    await expect(startDesktop()).rejects.toThrow("registration failed");
+    expect(coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(failedPort.dispose).toHaveBeenCalledOnce();
+    expect(failedChild.kill).toHaveBeenCalledOnce();
+    expect(createMainWindow).not.toHaveBeenCalled();
 
     await startDesktop();
+    expect(registerCommandHandlers).toHaveBeenCalledTimes(2);
+    expect(createMainWindow).toHaveBeenCalledOnce();
+    beforeQuitCallback()();
+    expect(successfulUnregister).toHaveBeenCalledOnce();
+  });
 
-    expect(app.whenReady).toHaveBeenCalledOnce();
-    expect(utilityProcess.fork).toHaveBeenCalledOnce();
-    expect(ordering).toEqual(["security", "fork", "window"]);
-    expect(registerCommandHandlers).toHaveBeenCalledOnce();
-    expect(app.once).toHaveBeenCalledWith("before-quit", expect.any(Function));
-    const quit = app.once.mock.calls[0]?.[1] as (() => void);
+  it("unregisters handlers after window creation fails and a retry installs only one live handler set", async () => {
+    const failedChild = childDouble();
+    const failedPort = portDouble();
+    const successfulChild = childDouble();
+    const successfulPort = portDouble();
+    const failedUnregister = vi.fn();
+    const successfulUnregister = vi.fn();
+    utilityProcess.fork.mockReturnValueOnce(failedChild).mockReturnValueOnce(successfulChild);
+    createUtilityPort.mockReturnValueOnce(failedPort).mockReturnValueOnce(successfulPort);
+    registerCommandHandlers.mockReturnValueOnce(failedUnregister).mockReturnValueOnce(successfulUnregister);
+    createMainWindow.mockImplementationOnce(() => {
+      throw new Error("window failed");
+    });
+    const startDesktop = await loadStartDesktop();
+
+    await expect(startDesktop()).rejects.toThrow("window failed");
+    expect(failedUnregister).toHaveBeenCalledOnce();
+    expect(coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(failedPort.dispose).toHaveBeenCalledOnce();
+    expect(failedChild.kill).toHaveBeenCalledOnce();
+
+    await startDesktop();
+    expect(registerCommandHandlers).toHaveBeenCalledTimes(2);
+    beforeQuitCallback()();
+    expect(failedUnregister).toHaveBeenCalledOnce();
+    expect(successfulUnregister).toHaveBeenCalledOnce();
+    expect(successfulPort.dispose).toHaveBeenCalledOnce();
+    expect(successfulChild.kill).toHaveBeenCalledOnce();
+  });
+
+  it("destroys the live window and all earlier resources when before-quit registration fails", async () => {
+    const child = childDouble();
+    const port = portDouble();
+    const mainWindow = windowDouble();
+    const unregister = vi.fn();
+    utilityProcess.fork.mockReturnValue(child);
+    createUtilityPort.mockReturnValue(port);
+    createMainWindow.mockReturnValue(mainWindow);
+    registerCommandHandlers.mockReturnValue(unregister);
+    app.once.mockImplementation(() => {
+      throw new Error("event registration failed");
+    });
+    const startDesktop = await loadStartDesktop();
+
+    await expect(startDesktop()).rejects.toThrow("event registration failed");
+
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(port.dispose).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(mainWindow.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("publishes progress to a live window and drops it after the window is destroyed", async () => {
+    const mainWindow = windowDouble();
+    createMainWindow.mockReturnValue(mainWindow);
+    const startDesktop = await loadStartDesktop();
+    await startDesktop();
+    const publish = (taskCoordinator.mock.calls as unknown[][])[0]?.[1] as ((progress: unknown) => void) | undefined;
+    const progress = {
+      taskId: "018f4f7e-8ead-7c0d-8000-000000000301",
+      phase: "running",
+      completed: 0,
+      total: 1,
+    };
+
+    publish?.(progress);
+    expect(mainWindow.webContents.send).toHaveBeenCalledOnce();
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith("task:progress", progress);
+
+    mainWindow.destroy();
+    publish?.(progress);
+    expect(mainWindow.webContents.send).toHaveBeenCalledOnce();
+  });
+
+  it("cleans handlers, coordinator, port, child and window exactly once across repeated quit callbacks", async () => {
+    const child = childDouble();
+    const port = portDouble();
+    const mainWindow = windowDouble();
+    const unregister = vi.fn();
+    utilityProcess.fork.mockReturnValue(child);
+    createUtilityPort.mockReturnValue(port);
+    createMainWindow.mockReturnValue(mainWindow);
+    registerCommandHandlers.mockReturnValue(unregister);
+    const startDesktop = await loadStartDesktop();
+    await startDesktop();
+
+    const quit = beforeQuitCallback();
     quit();
-    expect(coordinator.dispose).toHaveBeenCalledOnce();
-    expect(createUtilityPort.mock.results[0]?.value.dispose).toHaveBeenCalledOnce();
-    expect(utilityProcess.fork.mock.results[0]?.value.kill).toHaveBeenCalledOnce();
+    quit();
+
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(port.dispose).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(mainWindow.destroy).toHaveBeenCalledOnce();
   });
 });
