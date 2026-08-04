@@ -23,6 +23,8 @@ describe("SQLCipher executable spike", () => {
     for (const name of [
       "CSC_LINK",
       "CSC_KEY_PASSWORD",
+      "WIN_CSC_LINK",
+      "WIN_CSC_KEY_PASSWORD",
       "APPLE_ID",
       "APPLE_APP_SPECIFIC_PASSWORD",
       "APPLE_TEAM_ID",

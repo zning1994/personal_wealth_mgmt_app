@@ -326,7 +326,13 @@ async function walkFor(
 }
 
 function hasRequiredSigningCredentials(platform: NodeJS.Platform): boolean {
-  const common = Boolean(process.env.CSC_LINK && process.env.CSC_KEY_PASSWORD);
+  const certificateLink = platform === "win32"
+    ? process.env.WIN_CSC_LINK ?? process.env.CSC_LINK
+    : process.env.CSC_LINK;
+  const certificatePassword = platform === "win32"
+    ? process.env.WIN_CSC_KEY_PASSWORD ?? process.env.CSC_KEY_PASSWORD
+    : process.env.CSC_KEY_PASSWORD;
+  const common = Boolean(certificateLink && certificatePassword);
   if (platform === "win32") return common;
   return platform === "darwin" && Boolean(
     common &&
