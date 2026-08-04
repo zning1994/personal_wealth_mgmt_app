@@ -234,7 +234,6 @@ try {
   await writeFile(
     mainPath,
     `const { app, utilityProcess } = require("electron");
-app.commandLine.appendSwitch("headless");
 app.commandLine.appendSwitch("disable-gpu");
 app.whenReady().then(() => {
   const worker = utilityProcess.fork(${JSON.stringify(workerPath)}, [], {
@@ -370,7 +369,6 @@ async function buildAndLaunchProbe(
     path.join(electronAppRoot, "main.cjs"),
     `const { app } = require("electron");
 const fs = require("node:fs");
-app.commandLine.appendSwitch("headless");
 app.commandLine.appendSwitch("disable-gpu");
 fs.writeFileSync(process.env.PWM_SPIKE_RESULT, JSON.stringify({ stage: "main-loaded" }));
 const timeout = setTimeout(() => app.exit(9), 30000);
