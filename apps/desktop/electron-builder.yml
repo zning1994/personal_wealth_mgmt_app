@@ -1,6 +1,8 @@
 appId: com.personalwealth.desktop
 productName: Personal Wealth
 asar: true
+asarUnpack:
+  - "**/*.node"
 files:
   - out/**
   - "!node_modules/**"
@@ -10,8 +12,16 @@ buildDependenciesFromSource: false
 npmRebuild: false
 mac:
   identity: null
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: ../../build/entitlements.mac.plist
+  entitlementsInherit: ../../build/entitlements.mac.inherit.plist
   target:
     - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
       arch:
         - arm64
         - x64

@@ -14,7 +14,13 @@
     "smoke:dist": "pnpm --filter @pwm/desktop smoke:dist",
     "test:e2e": "pnpm --filter @pwm/desktop test:e2e",
     "package:dir": "pnpm --filter @pwm/desktop package:dir",
-    "test:packaged": "pnpm --filter @pwm/desktop package:acceptance"
+    "test:packaged": "pnpm --filter @pwm/desktop package:acceptance",
+    "test:privacy": "node scripts/quality/privacy.mjs",
+    "test:integration": "pnpm --filter @pwm/tests test -- tests/integration",
+    "test:release": "pnpm --filter @pwm/tests test -- tests/release",
+    "package:verify-local": "pnpm --filter @pwm/desktop package:dir && node scripts/release/verify-artifact.mjs apps/desktop/release",
+    "release:preflight": "node scripts/release/preflight.mjs",
+    "release:smoke": "node scripts/release/smoke-installed-app.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
