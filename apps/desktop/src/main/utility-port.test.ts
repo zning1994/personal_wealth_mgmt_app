@@ -117,4 +117,31 @@ describe("createUtilityPort", () => {
     expect(() => utility.postMessage({ type: "cancel", taskId: "018f4f7e-8ead-7c0d-8000-000000000203" as never })).toThrow();
     expect(mainPort.off).toHaveBeenCalledWith("close", expect.any(Function));
   });
+
+  it("does not resolve readiness for an invalid ready message", async () => {
+    const mainPort = createPort(); const workerPort = createPort(); const child = createChild();
+    messageChannelMain.mockReturnValue({ port1: mainPort, port2: workerPort });
+    const utility = createUtilityPort(child as never);
+    let resolved = false;
+    void utility.ready().then(() => { resolved = true; });
+    mainPort.emit("message", { data: { type: "pwm:utility-ready", extra: true } });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    mainPort.emit("message", { data: { type: "pwm:utility-ready" } });
+    await utility.ready();
+    expect(resolved).toBe(true);
+  });
+
+  it("cleans exact listeners and both ports when port start throws", async () => {
+    const mainPort = createPort(); const workerPort = createPort(); const child = createChild();
+    mainPort.start.mockImplementation(() => { throw new Error("start failed"); });
+    messageChannelMain.mockReturnValue({ port1: mainPort, port2: workerPort });
+    expect(() => createUtilityPort(child as never)).toThrow("start failed");
+    expect(mainPort.off).toHaveBeenCalledWith("message", expect.any(Function));
+    expect(mainPort.off).toHaveBeenCalledWith("close", expect.any(Function));
+    expect(child.off).toHaveBeenCalledWith("exit", expect.any(Function));
+    expect(child.off).toHaveBeenCalledWith("error", expect.any(Function));
+    expect(mainPort.close).toHaveBeenCalledOnce();
+    expect(workerPort.close).toHaveBeenCalledOnce();
+  });
 });
