@@ -15,7 +15,12 @@ import { createMainWindow } from "./window";
 
 const UTILITY_READY_TIMEOUT_MS = 5_000;
 
-let startup: Promise<void> | undefined;
+interface StartupGeneration {
+  readonly token: object;
+  readonly promise: Promise<void>;
+}
+
+let startup: StartupGeneration | undefined;
 
 function desktopPlatform(): "darwin" | "win32" {
   if (process.platform === "darwin" || process.platform === "win32")
@@ -68,7 +73,7 @@ function disposeDesktop(
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
 }
 
-async function start(): Promise<void> {
+async function start(token: object): Promise<void> {
   await app.whenReady();
   app.setAppUserModelId("com.personalwealth.desktop");
   installApplicationProtocol(bundledPath("renderer"));
@@ -80,10 +85,23 @@ async function start(): Promise<void> {
   let unregisterHandlers: (() => void) | undefined;
   let mainWindow: BrowserWindow | undefined;
   let disposed = false;
+  let beforeQuitAttached = false;
+  let windowClosedAttached = false;
+  const onBeforeQuit = () => dispose();
+  const onWindowClosed = () => dispose();
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    if (beforeQuitAttached) {
+      app.off("before-quit", onBeforeQuit);
+      beforeQuitAttached = false;
+    }
+    if (mainWindow && windowClosedAttached) {
+      mainWindow.off("closed", onWindowClosed);
+      windowClosedAttached = false;
+    }
     disposeDesktop(coordinator, port, unregisterHandlers, child, mainWindow);
+    if (startup?.token === token) startup = undefined;
   };
 
   try {
@@ -107,11 +125,14 @@ async function start(): Promise<void> {
         coordinator?.cancel(input) ?? { cancelled: false },
     };
     unregisterHandlers = registerCommandHandlers(ipcMain, handlers);
-    mainWindow = createMainWindow({
+    mainWindow = await createMainWindow({
       preloadPath: bundledPath("preload", "index.js"),
       rendererUrl: APPLICATION_ENTRY_URL,
     });
-    app.once("before-quit", dispose);
+    mainWindow.once("closed", onWindowClosed);
+    windowClosedAttached = true;
+    app.once("before-quit", onBeforeQuit);
+    beforeQuitAttached = true;
   } catch (error) {
     dispose();
     throw error;
@@ -119,13 +140,14 @@ async function start(): Promise<void> {
 }
 
 export async function startDesktop(): Promise<void> {
-  if (startup) return startup;
-  const currentStartup = start();
-  startup = currentStartup;
+  if (startup) return startup.promise;
+  const token = {};
+  const currentStartup = start(token);
+  startup = { token, promise: currentStartup };
   try {
     await currentStartup;
   } catch (error) {
-    if (startup === currentStartup) startup = undefined;
+    if (startup?.token === token) startup = undefined;
     throw error;
   }
 }

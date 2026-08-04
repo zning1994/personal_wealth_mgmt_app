@@ -4,7 +4,7 @@ const { startDesktop, registerApplicationProtocolScheme, app } = vi.hoisted(
   () => ({
     startDesktop: vi.fn().mockResolvedValue(undefined),
     registerApplicationProtocolScheme: vi.fn(),
-    app: { exit: vi.fn() },
+    app: { exit: vi.fn(), on: vi.fn(), off: vi.fn(), quit: vi.fn() },
   }),
 );
 vi.mock("./index", () => ({ startDesktop }));
@@ -17,6 +17,8 @@ describe("production bootstrap", () => {
   it("starts the desktop exactly once", () => {
     expect(registerApplicationProtocolScheme).toHaveBeenCalledOnce();
     expect(startDesktop).toHaveBeenCalledOnce();
+    expect(app.on).toHaveBeenCalledWith("activate", expect.any(Function));
+    expect(app.on).toHaveBeenCalledWith("window-all-closed", expect.any(Function));
     expect(
       registerApplicationProtocolScheme.mock.invocationCallOrder[0],
     ).toBeLessThan(

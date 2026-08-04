@@ -55,7 +55,7 @@ describe("production utility worker entrypoint", () => {
         task: { kind: "health-check", payload: { echo: "ok" } },
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 60));
 
     expect(responses).toContainEqual({
       type: "result",

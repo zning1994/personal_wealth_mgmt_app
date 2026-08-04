@@ -14,7 +14,7 @@ function applicationOriginFromRendererUrl(rendererUrl: string): string {
   return `${parsedRendererUrl.protocol}//${parsedRendererUrl.host}`;
 }
 
-export function createMainWindow(options: { preloadPath: string; rendererUrl: string }): BrowserWindow {
+export async function createMainWindow(options: { preloadPath: string; rendererUrl: string }): Promise<BrowserWindow> {
   const applicationOrigin = applicationOriginFromRendererUrl(options.rendererUrl);
   const window = new BrowserWindow({
     width: 1180,
@@ -27,6 +27,11 @@ export function createMainWindow(options: { preloadPath: string; rendererUrl: st
   installWindowSecurity(window.webContents.session, applicationOrigin);
   lockWebContents(window.webContents, applicationOrigin);
   window.once("ready-to-show", () => window.show());
-  void window.loadURL(options.rendererUrl);
-  return window;
+  try {
+    await window.loadURL(options.rendererUrl);
+    return window;
+  } catch (error) {
+    if (!window.isDestroyed()) window.destroy();
+    throw error;
+  }
 }

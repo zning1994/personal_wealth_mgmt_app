@@ -12,9 +12,11 @@
     "smoke:dist": "node scripts/assert-dist.mjs",
     "test:e2e": "pnpm build && playwright test",
     "package:dir": "pnpm build && electron-builder --dir",
+    "test:packaged": "node scripts/test-packaged.mjs",
+    "package:acceptance": "pnpm package:dir && pnpm test:packaged",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint src e2e scripts electron.vite.config.ts playwright.config.ts vitest.config.ts"
+    "lint": "eslint src e2e scripts electron.vite.config.ts playwright.config.ts playwright.packaged.config.ts vitest.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

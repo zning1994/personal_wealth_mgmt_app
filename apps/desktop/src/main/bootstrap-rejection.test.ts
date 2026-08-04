@@ -5,7 +5,7 @@ describe("production bootstrap failure", () => {
     vi.resetModules();
     const failure = new Error("account=secret-path");
     const startDesktop = vi.fn().mockRejectedValue(failure);
-    const app = { exit: vi.fn() };
+    const app = { exit: vi.fn(), on: vi.fn(), off: vi.fn(), quit: vi.fn() };
     const registerApplicationProtocolScheme = vi.fn();
     const error = vi
       .spyOn(console, "error")

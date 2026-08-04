@@ -24,6 +24,7 @@ const {
       getVersion: vi.fn(),
       whenReady: vi.fn(),
       once: vi.fn(),
+      off: vi.fn(),
       setAppUserModelId: vi.fn(),
     },
     ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
@@ -65,12 +66,30 @@ function portDouble(ready: Promise<void> = Promise.resolve()) {
 
 function windowDouble() {
   let destroyed = false;
+  const listeners = new Map<string, Set<() => void>>();
+  const once = vi.fn((event: string, listener: () => void) => {
+    const wrapped = () => {
+      listeners.get(event)?.delete(wrapped);
+      listener();
+    };
+    const eventListeners = listeners.get(event) ?? new Set();
+    eventListeners.add(wrapped);
+    listeners.set(event, eventListeners);
+  });
+  const off = vi.fn((event: string, listener: () => void) => {
+    listeners.get(event)?.delete(listener);
+  });
   return {
     destroy: vi.fn(() => {
       destroyed = true;
     }),
     isDestroyed: vi.fn(() => destroyed),
     webContents: { send: vi.fn() },
+    once,
+    off,
+    emit(event: string) {
+      for (const listener of [...(listeners.get(event) ?? [])]) listener();
+    },
   };
 }
 
@@ -423,5 +442,67 @@ describe("startDesktop", () => {
     expect(port.dispose).toHaveBeenCalledOnce();
     expect(child.kill).toHaveBeenCalledOnce();
     expect(mainWindow.destroy).toHaveBeenCalledOnce();
+  });
+
+  it("releases the module startup after the only window closes and composes a fresh generation", async () => {
+    const firstChild = childDouble();
+    const secondChild = childDouble();
+    const firstPort = portDouble();
+    const secondPort = portDouble();
+    const firstWindow = windowDouble();
+    const secondWindow = windowDouble();
+    const firstUnregister = vi.fn();
+    const secondUnregister = vi.fn();
+    utilityProcess.fork.mockReturnValueOnce(firstChild).mockReturnValueOnce(secondChild);
+    createUtilityPort.mockReturnValueOnce(firstPort).mockReturnValueOnce(secondPort);
+    createMainWindow.mockReturnValueOnce(firstWindow).mockReturnValueOnce(secondWindow);
+    registerCommandHandlers.mockReturnValueOnce(firstUnregister).mockReturnValueOnce(secondUnregister);
+    const startDesktop = await loadStartDesktop();
+
+    await startDesktop();
+    firstWindow.emit("closed");
+    firstWindow.emit("closed");
+
+    expect(firstUnregister).toHaveBeenCalledOnce();
+    expect(coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(firstPort.dispose).toHaveBeenCalledOnce();
+    expect(firstChild.kill).toHaveBeenCalledOnce();
+    expect(app.off).toHaveBeenCalledWith("before-quit", expect.any(Function));
+    expect(firstWindow.off).toHaveBeenCalledWith("closed", expect.any(Function));
+
+    await startDesktop();
+    expect(utilityProcess.fork).toHaveBeenCalledTimes(2);
+    expect(createMainWindow).toHaveBeenCalledTimes(2);
+    expect(registerCommandHandlers).toHaveBeenCalledTimes(2);
+    expect(app.once.mock.calls.filter(([event]) => event === "before-quit")).toHaveLength(2);
+
+    firstWindow.emit("closed");
+    await startDesktop();
+    expect(utilityProcess.fork).toHaveBeenCalledTimes(2);
+    expect(secondUnregister).not.toHaveBeenCalled();
+  });
+
+  it("rolls back every resource when awaited initial renderer loading rejects and retries", async () => {
+    const failedChild = childDouble();
+    const healthyChild = childDouble();
+    const failedPort = portDouble();
+    const healthyPort = portDouble();
+    const unregisterFailed = vi.fn();
+    const unregisterHealthy = vi.fn();
+    utilityProcess.fork.mockReturnValueOnce(failedChild).mockReturnValueOnce(healthyChild);
+    createUtilityPort.mockReturnValueOnce(failedPort).mockReturnValueOnce(healthyPort);
+    registerCommandHandlers.mockReturnValueOnce(unregisterFailed).mockReturnValueOnce(unregisterHealthy);
+    createMainWindow.mockRejectedValueOnce(new Error("renderer load failed")).mockResolvedValueOnce(windowDouble());
+    const startDesktop = await loadStartDesktop();
+
+    await expect(startDesktop()).rejects.toThrow("renderer load failed");
+    expect(unregisterFailed).toHaveBeenCalledOnce();
+    expect(coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(failedPort.dispose).toHaveBeenCalledOnce();
+    expect(failedChild.kill).toHaveBeenCalledOnce();
+
+    await expect(startDesktop()).resolves.toBeUndefined();
+    expect(utilityProcess.fork).toHaveBeenCalledTimes(2);
+    expect(unregisterHealthy).not.toHaveBeenCalled();
   });
 });

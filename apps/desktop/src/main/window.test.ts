@@ -10,9 +10,12 @@ describe("createMainWindow", () => {
     browserWindow.mockReset();
   });
 
-  it("creates a locked window and loads the renderer URL", () => {
+  it("creates a locked window and awaits the renderer URL", async () => {
     const show = vi.fn();
-    const loadURL = vi.fn();
+    let resolveLoad: (() => void) | undefined;
+    const loadURL = vi.fn(() => new Promise<void>((resolve) => {
+      resolveLoad = resolve;
+    }));
     let readyToShow: (() => void) | undefined;
     const once = vi.fn((event: string, callback: () => void) => {
       if (event === "ready-to-show") readyToShow = callback;
@@ -29,10 +32,17 @@ describe("createMainWindow", () => {
     const fakeWindow = { webContents, once, show, loadURL };
     browserWindow.mockReturnValue(fakeWindow);
 
-    const result = createMainWindow({
+    const loading = createMainWindow({
       preloadPath: "/app/preload.cjs",
       rendererUrl: "app://desktop/index.html",
     });
+
+    let settled = false;
+    void loading.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    resolveLoad?.();
+    const result = await loading;
 
     expect(result).toBe(fakeWindow);
     expect(browserWindow).toHaveBeenCalledWith(
@@ -70,12 +80,40 @@ describe("createMainWindow", () => {
     expect(show).toHaveBeenCalledOnce();
   });
 
+  it("destroys the partially created window and propagates initial load failure", async () => {
+    let destroyed = false;
+    const destroy = vi.fn(() => { destroyed = true; });
+    const fakeWindow = {
+      webContents: {
+        session: {
+          setPermissionRequestHandler: vi.fn(),
+          setPermissionCheckHandler: vi.fn(),
+          webRequest: { onBeforeRequest: vi.fn() },
+        },
+        on: vi.fn(),
+        setWindowOpenHandler: vi.fn(),
+      },
+      once: vi.fn(),
+      show: vi.fn(),
+      loadURL: vi.fn().mockRejectedValue(new Error("renderer load failed")),
+      destroy,
+      isDestroyed: vi.fn(() => destroyed),
+    };
+    browserWindow.mockReturnValue(fakeWindow);
+
+    await expect(createMainWindow({
+      preloadPath: "/app/preload.cjs",
+      rendererUrl: "app://desktop/index.html",
+    })).rejects.toThrow("renderer load failed");
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
   it.each(["https://desktop/index.html", "not a URL"])(
     "rejects an invalid renderer URL before creating a window: %s",
-    (rendererUrl) => {
-      expect(() =>
+    async (rendererUrl) => {
+      await expect(
         createMainWindow({ preloadPath: "/app/preload.cjs", rendererUrl }),
-      ).toThrow("Renderer URL must use the app protocol");
+      ).rejects.toThrow("Renderer URL must use the app protocol");
       expect(browserWindow).not.toHaveBeenCalled();
     },
   );
