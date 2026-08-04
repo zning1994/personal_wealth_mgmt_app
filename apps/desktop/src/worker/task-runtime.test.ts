@@ -45,7 +45,7 @@ function createQueuedWorkerPort() {
 }
 
 describe("task runtime", () => {
-  it("keeps the default health check cancellable for a bounded 50ms turn", async () => {
+  it("keeps the default health check cancellable for a bounded 250ms turn", async () => {
     vi.useFakeTimers();
     try {
       const send = vi.fn();
@@ -57,7 +57,7 @@ describe("task runtime", () => {
         type: "progress",
         progress: { taskId: currentTaskId, phase: "running", completed: 0, total: 1 },
       });
-      await vi.advanceTimersByTimeAsync(49);
+      await vi.advanceTimersByTimeAsync(249);
       expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "result" }));
       await vi.advanceTimersByTimeAsync(1);
       await running;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   attachTransferredUtilityWorker,
   INVALID_WORKER_MESSAGE_DIAGNOSTIC,
@@ -55,7 +55,13 @@ describe("production utility worker entrypoint", () => {
         task: { kind: "health-check", payload: { echo: "ok" } },
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await vi.waitFor(() => {
+      expect(responses).toContainEqual({
+        type: "result",
+        taskId: "018f4f7e-8ead-7c0d-8000-000000000031",
+        result: { echo: "ok" },
+      });
+    }, { timeout: 1_000 });
 
     expect(responses).toContainEqual({
       type: "result",

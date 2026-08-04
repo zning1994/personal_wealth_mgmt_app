@@ -108,6 +108,35 @@ describe("createMainWindow", () => {
     expect(destroy).toHaveBeenCalledOnce();
   });
 
+  it("destroys its window exactly once when security setup throws after construction", async () => {
+    let destroyed = false;
+    const destroy = vi.fn(() => { destroyed = true; });
+    const fakeWindow = {
+      webContents: {
+        session: {
+          setPermissionRequestHandler: vi.fn(() => { throw new Error("security setup failed"); }),
+          setPermissionCheckHandler: vi.fn(),
+          webRequest: { onBeforeRequest: vi.fn() },
+        },
+        on: vi.fn(),
+        setWindowOpenHandler: vi.fn(),
+      },
+      once: vi.fn(),
+      show: vi.fn(),
+      loadURL: vi.fn(),
+      destroy,
+      isDestroyed: vi.fn(() => destroyed),
+    };
+    browserWindow.mockReturnValue(fakeWindow);
+
+    await expect(createMainWindow({
+      preloadPath: "/app/preload.cjs",
+      rendererUrl: "app://desktop/index.html",
+    })).rejects.toThrow("security setup failed");
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(fakeWindow.loadURL).not.toHaveBeenCalled();
+  });
+
   it.each(["https://desktop/index.html", "not a URL"])(
     "rejects an invalid renderer URL before creating a window: %s",
     async (rendererUrl) => {

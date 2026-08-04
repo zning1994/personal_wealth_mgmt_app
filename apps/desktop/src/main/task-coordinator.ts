@@ -1,5 +1,6 @@
 import {
   TaskIdSchema,
+  TaskProgressSchema,
   WorkerResponseSchema,
   type CancelTaskInput,
   type StartUtilityTaskInput,
@@ -128,7 +129,22 @@ export class TaskCoordinator {
       return;
     }
 
-    if (!this.active.delete(response.taskId)) return;
+    if (!this.active.has(response.taskId)) return;
+    if (response.type === "error" && response.code === "cancelled") {
+      try {
+        this.publish(TaskProgressSchema.parse({
+          taskId: response.taskId,
+          phase: "cancelled",
+          completed: 0,
+          total: 1,
+        }));
+      } finally {
+        this.active.delete(response.taskId);
+        this.cancellationRequested.delete(response.taskId);
+      }
+      return;
+    }
+    this.active.delete(response.taskId);
     this.cancellationRequested.delete(response.taskId);
   }
 

@@ -3,13 +3,14 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { resolvePackagedExecutable } from "./packaged-app.mjs";
+import { resolvePackagedPlaywrightCommand } from "./packaged-playwright-command.mjs";
 
 const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const executable = await resolvePackagedExecutable(desktopRoot);
-const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const playwright = resolvePackagedPlaywrightCommand();
 const child = spawn(
-  pnpm,
-  ["exec", "playwright", "test", "--config=playwright.packaged.config.ts"],
+  playwright.command,
+  playwright.args,
   {
     cwd: desktopRoot,
     stdio: "inherit",

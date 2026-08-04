@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskId } from "@pwm/contracts";
+import { createTaskRuntime } from "../worker/task-runtime";
 import { TaskCoordinator, type UtilityPort } from "./task-coordinator";
 
 function createPort() {
@@ -105,6 +106,59 @@ describe("TaskCoordinator", () => {
 
     expect(coordinator.cancel({ taskId: task.taskId })).toEqual({ cancelled: false });
     expect(utility.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes one validated cancelled terminal progress before clearing the active task", () => {
+    const utility = createPort();
+    const publish = vi.fn();
+    const taskId = "018f4f7e-8ead-7c0d-8000-000000000031" as TaskId;
+    const coordinator = new TaskCoordinator(utility.port, publish, () => taskId);
+    coordinator.start(taskInput);
+
+    utility.receive({ type: "error", taskId, code: "cancelled" });
+    utility.receive({ type: "error", taskId, code: "cancelled" });
+
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledWith({
+      taskId,
+      phase: "cancelled",
+      completed: 0,
+      total: 1,
+    });
+    expect(coordinator.cancel({ taskId })).toEqual({ cancelled: false });
+  });
+
+  it("observes running then cancelled across the coordinator-to-worker runtime chain", async () => {
+    let receiveFromWorker: ((message: unknown) => void) | undefined;
+    const workerReceives: Promise<void>[] = [];
+    const runtime = createTaskRuntime((message) => receiveFromWorker?.(message), {
+      waitForTurn: (signal) => new Promise((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      }),
+    });
+    const port: UtilityPort = {
+      postMessage(message) {
+        workerReceives.push(runtime.receive(message));
+      },
+      onMessage(listener) {
+        receiveFromWorker = listener;
+        return () => { receiveFromWorker = undefined; };
+      },
+    };
+    const publish = vi.fn();
+    const taskId = "018f4f7e-8ead-7c0d-8000-000000000032" as TaskId;
+    const coordinator = new TaskCoordinator(port, publish, () => taskId);
+
+    coordinator.start(taskInput);
+    expect(coordinator.cancel({ taskId })).toEqual({ cancelled: true });
+    await Promise.all(workerReceives);
+
+    expect(publish.mock.calls.map(([progress]) => progress.phase)).toEqual([
+      "running",
+      "cancelled",
+    ]);
+    expect(coordinator.cancel({ taskId })).toEqual({ cancelled: false });
   });
 
   it("publishes validated progress only for an active task", () => {

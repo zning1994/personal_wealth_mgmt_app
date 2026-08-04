@@ -43,7 +43,7 @@ function waitForCancellableTurn(signal: AbortSignal): Promise<void> {
       return;
     }
 
-    const timer = setTimeout(finish, 50);
+    const timer = setTimeout(finish, 250);
     const onAbort = () => finish();
     signal.addEventListener("abort", onAbort, { once: true });
 

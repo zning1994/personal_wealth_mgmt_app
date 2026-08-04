@@ -24,10 +24,10 @@ export async function createMainWindow(options: { preloadPath: string; rendererU
     show: false,
     webPreferences: secureWebPreferences(options.preloadPath),
   });
-  installWindowSecurity(window.webContents.session, applicationOrigin);
-  lockWebContents(window.webContents, applicationOrigin);
-  window.once("ready-to-show", () => window.show());
   try {
+    installWindowSecurity(window.webContents.session, applicationOrigin);
+    lockWebContents(window.webContents, applicationOrigin);
+    window.once("ready-to-show", () => window.show());
     await window.loadURL(options.rendererUrl);
     return window;
   } catch (error) {

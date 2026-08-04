@@ -14,22 +14,28 @@ export async function assertDesktopAcceptance(page: Page): Promise<void> {
   ]);
 
   const completed = await page.evaluate(async () => {
-    const phases: string[] = [];
-    let taskId = "";
+    const progressEvents: Array<{ taskId: string; phase: string }> = [];
+    let taskId: Awaited<ReturnType<typeof window.wealth.startTask>>["taskId"] | undefined;
     let resolveTerminal: (() => void) | undefined;
     const terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
     const unsubscribe = window.wealth.onTaskProgress((progress) => {
-      if (progress.taskId !== taskId) return;
-      phases.push(progress.phase);
-      if (progress.phase === "completed") resolveTerminal?.();
+      progressEvents.push(progress);
+      if (progress.taskId === taskId && progress.phase === "completed") resolveTerminal?.();
     });
     try {
-      taskId = (await window.wealth.startTask({ kind: "health-check", payload: { echo: "e2e" } })).taskId;
+      const currentTaskId = (await window.wealth.startTask({ kind: "health-check", payload: { echo: "e2e" } })).taskId;
+      taskId = currentTaskId;
+      if (progressEvents.some((progress) => progress.taskId === currentTaskId && progress.phase === "completed")) {
+        resolveTerminal?.();
+      }
       await Promise.race([
         terminal,
         new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("health task timed out")), 3_000)),
       ]);
-      return { taskId, phases };
+      return {
+        taskId: currentTaskId,
+        phases: progressEvents.filter((progress) => progress.taskId === currentTaskId).map((progress) => progress.phase),
+      };
     } finally {
       unsubscribe();
     }
@@ -38,16 +44,44 @@ export async function assertDesktopAcceptance(page: Page): Promise<void> {
   expect(completed.phases).toEqual(["running", "completed"]);
 
   const cancelled = await page.evaluate(async () => {
-    const { taskId } = await window.wealth.startTask({ kind: "health-check", payload: { echo: "cancel" } });
-    const first = await window.wealth.cancelTask({ taskId });
-    let last = first;
-    for (let attempt = 0; attempt < 100 && last.cancelled; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      last = await window.wealth.cancelTask({ taskId });
+    const progressEvents: Array<{ taskId: string; phase: string }> = [];
+    let taskId: Awaited<ReturnType<typeof window.wealth.startTask>>["taskId"] | undefined;
+    let resolveTerminal: (() => void) | undefined;
+    const terminal = new Promise<void>((resolve) => { resolveTerminal = resolve; });
+    const unsubscribe = window.wealth.onTaskProgress((progress) => {
+      progressEvents.push(progress);
+      if (progress.taskId === taskId && progress.phase === "cancelled") resolveTerminal?.();
+    });
+    try {
+      const currentTaskId = (await window.wealth.startTask({ kind: "health-check", payload: { echo: "cancel" } })).taskId;
+      taskId = currentTaskId;
+      const first = await window.wealth.cancelTask({ taskId: currentTaskId });
+      if (progressEvents.some((progress) => progress.taskId === currentTaskId && progress.phase === "cancelled")) {
+        resolveTerminal?.();
+      }
+      await Promise.race([
+        terminal,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("cancel task timed out")), 3_000)),
+      ]);
+      let last = first;
+      for (let attempt = 0; attempt < 100 && last.cancelled; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        last = await window.wealth.cancelTask({ taskId: currentTaskId });
+      }
+      return {
+        first,
+        last,
+        taskId: currentTaskId,
+        phases: progressEvents.filter((progress) => progress.taskId === currentTaskId).map((progress) => progress.phase),
+      };
+    } finally {
+      unsubscribe();
     }
-    return { first, last, taskId };
   });
   expect(cancelled.taskId).toMatch(/^[0-9a-f-]{36}$/);
   expect(cancelled.first).toEqual({ cancelled: true });
   expect(cancelled.last).toEqual({ cancelled: false });
+  expect(cancelled.phases).toContain("running");
+  expect(cancelled.phases).toContain("cancelled");
+  expect(cancelled.phases).not.toContain("completed");
 }
