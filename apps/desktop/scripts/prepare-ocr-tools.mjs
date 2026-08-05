@@ -23,9 +23,37 @@ function firstExisting(candidates) {
   return candidates.find((candidate) => candidate && existsSync(candidate));
 }
 
+function findFiles(root, name) {
+  if (!root || !existsSync(root)) return [];
+  const pending = [root];
+  const matches = [];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const candidate = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(candidate);
+      } else if (entry.name.toLowerCase() === name.toLowerCase()) {
+        matches.push(candidate);
+      }
+    }
+  }
+  return matches;
+}
+
 function findWindowsExecutable(name, candidates) {
   const where = command("where", [name]).split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
-  return firstExisting([...where, ...candidates]);
+  const chocolateyRoot = process.env.ChocolateyInstall || "C:\\ProgramData\\chocolatey";
+  const packageName = name.toLowerCase().startsWith("pdf") ? "poppler" : "tesseract";
+  const packageRoot = path.join(chocolateyRoot, "lib", packageName, "tools");
+  return firstExisting([...candidates, ...findFiles(packageRoot, name), ...where]);
 }
 
 function findUnixExecutable(name) {
