@@ -1,0 +1,177 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to package
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:privacy
+      - run: pnpm test:integration
+      - run: pnpm build
+
+  e2e:
+    name: Electron critical journey (${{ matrix.os }})
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @pwm/desktop test:e2e
+
+  macos:
+    name: macOS ${{ matrix.arch }} signed package
+    needs: [preflight, e2e]
+    environment: desktop-release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bundle OCR tools
+        run: pnpm --filter @pwm/desktop prepare:ocr
+        env:
+          PWM_OCR_REQUIRE_TOOLS: "1"
+      - name: Stage platform native bindings
+        run: pnpm --filter @pwm/desktop prepare:native
+      - name: Validate macOS signing secrets
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: >-
+          node -e "for (const name of ['CSC_LINK','CSC_KEY_PASSWORD','APPLE_ID','APPLE_APP_SPECIFIC_PASSWORD','APPLE_TEAM_ID']) if (!process.env[name]) throw new Error('missing release secret: '+name)"
+      - run: pnpm --filter @pwm/desktop exec electron-builder --config electron-builder.yml --mac dmg zip --${{ matrix.arch }}
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Launch packaged macOS app
+        run: pnpm --filter @pwm/desktop test:packaged
+      - name: Verify signed app bundle
+        run: bash scripts/release/verify-macos-signature.sh apps/desktop/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: personal-wealth-macos-${{ matrix.arch }}
+          if-no-files-found: error
+          path: apps/desktop/release/*
+
+  windows:
+    name: Windows x64 unsigned package
+    needs: [preflight, e2e]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bundle OCR tools
+        run: pnpm --filter @pwm/desktop prepare:ocr
+        env:
+          PWM_OCR_REQUIRE_TOOLS: "1"
+      - name: Stage platform native bindings
+        run: pnpm --filter @pwm/desktop prepare:native
+      - run: pnpm --filter @pwm/desktop exec electron-builder --config electron-builder.yml --win nsis --x64
+      - name: Launch packaged Windows app
+        run: pnpm --filter @pwm/desktop test:packaged
+      - name: Write unsigned disclosure
+        shell: pwsh
+        run: Set-Content -Path apps/desktop/release/WINDOWS-UNSIGNED.txt -Value 'Personal Wealth v0.1.0 Windows package is unsigned. Verify the downloaded checksum and install only if you trust the source.'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: personal-wealth-windows-x64-unsigned
+          if-no-files-found: error
+          path: apps/desktop/release/*
+
+  draft-release:
+    name: Create draft GitHub Release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: personal-wealth-*
+          path: release-assets
+          merge-multiple: true
+      - run: sha256sum release-assets/* | tee release-assets/SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: true
+          generate_release_notes: true
+          files: release-assets/*

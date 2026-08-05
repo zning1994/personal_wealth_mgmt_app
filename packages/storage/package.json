@@ -1,0 +1,32 @@
+{
+  "name": "@pwm/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run src",
+    "test:spike": "vitest run scripts/run-sqlcipher-spike.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src scripts vitest.config.ts",
+    "spike:sqlcipher": "tsx scripts/run-sqlcipher-spike.ts",
+    "assert:spike": "tsx scripts/assert-spike-report.ts"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "2.0.2",
+    "@pwm/application": "workspace:*",
+    "@pwm/contracts": "workspace:*",
+    "@pwm/domain": "workspace:*",
+    "@pwm/fx": "workspace:*",
+    "better-sqlite3-multiple-ciphers": "12.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "node-gyp": "11.1.0",
+    "tsx": "4.20.3",
+    "typescript": "^5.9.2",
+    "vitest": "2.1.9"
+  }
+}

@@ -1,0 +1,27 @@
+# Planning artifacts remain local until the user approves publication.
+/docs/
+
+# Local brainstorming visual companion state.
+/.superpowers/
+
+# Project-local isolated implementation worktrees.
+/.worktrees/
+
+# Dependencies and generated build/test output.
+node_modules/
+dist/
+out/
+release/
+apps/desktop/resources/ocr/*
+!apps/desktop/resources/ocr/.gitkeep
+coverage/
+.vite/
+test-results/
+playwright-report/
+artifacts/
+*.tsbuildinfo
+
+# Machine-local artifacts.
+.env.local
+*.log
+.DS_Store

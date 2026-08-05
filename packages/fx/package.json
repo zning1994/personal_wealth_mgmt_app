@@ -1,0 +1,11 @@
+{
+  "name": "@pwm/fx",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "test": "vitest run", "typecheck": "tsc -p tsconfig.json --noEmit", "lint": "eslint src test", "build": "tsc -p tsconfig.json --noEmit" },
+  "dependencies": { "@pwm/contracts": "workspace:*", "@pwm/domain": "workspace:*", "zod": "^3.25.76" },
+  "devDependencies": { "@types/node": "^22.15.0", "fast-check": "4.9.0", "typescript": "^5.9.2", "vitest": "2.1.9" }
+}

@@ -1,0 +1,7 @@
+import { describe, expect, it } from "vitest";
+import type { SqlCipherConnection } from "../sqlcipher/driver";
+import { SqlImportUnitOfWork } from "./sql-import-unit-of-work";
+
+describe("SqlImportUnitOfWork", () => {
+  it("executes one transaction around ledger and import repositories", async () => { let transactions = 0; const connection: SqlCipherConnection = { exec: async () => undefined, get: async <T extends Record<string, unknown>>(sql: string, params?: readonly unknown[]): Promise<T | undefined> => { void sql; void params; return { workspace_id: "ws" } as unknown as T; }, all: async <T extends Record<string, unknown>>(sql: string, params?: readonly unknown[]) => { void sql; void params; return [] as readonly T[]; }, transaction: async <T>(work: () => Promise<T>) => { transactions += 1; return work(); }, close: async () => undefined }; const unit = new SqlImportUnitOfWork(connection); await unit.run(async ({ ledger }) => { await ledger.saveJournal({ id: "00000000-0000-4000-8000-000000000001" as never, workspaceId: "00000000-0000-4000-8000-000000000002" as never, occurredOn: "2026-08-04", description: "Synthetic", postings: [{ id: "00000000-0000-4000-8000-000000000003" as never, accountId: "00000000-0000-4000-8000-000000000004" as never, amount: { currency: "AED" as never, minor: -1n }, role: "principal" }], version: 0, deletedAt: null, transferLinkId: null }, "synthetic-source"); }); expect(transactions).toBe(1); });
+});

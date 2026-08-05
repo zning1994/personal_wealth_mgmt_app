@@ -1,0 +1,16 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`sanitized import golden > keeps bilingual rows stable from parse through reconciliation 1`] = `
+[
+  [
+    "2026-08-01",
+    "Synthetic Market 合成超市",
+    "-1299",
+  ],
+  [
+    "2026-08-02",
+    "Synthetic Salary 合成工资",
+    "10000",
+  ],
+]
+`;

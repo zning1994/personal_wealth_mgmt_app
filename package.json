@@ -1,0 +1,35 @@
+{
+  "name": "personal-wealth-mgmt",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=22.17.0 <23"
+  },
+  "scripts": {
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "prepare:ocr": "pnpm --filter @pwm/desktop prepare:ocr",
+    "smoke:dist": "pnpm --filter @pwm/desktop smoke:dist",
+    "test:e2e": "pnpm --filter @pwm/desktop test:e2e",
+    "package:dir": "pnpm --filter @pwm/desktop package:dir",
+    "test:packaged": "pnpm --filter @pwm/desktop package:acceptance",
+    "test:privacy": "node scripts/quality/privacy.mjs",
+    "test:integration": "pnpm --filter @pwm/tests test -- tests/integration",
+    "test:release": "pnpm --filter @pwm/tests test -- tests/release",
+    "package:verify-local": "pnpm --filter @pwm/desktop package:dir && node scripts/release/verify-artifact.mjs apps/desktop/release",
+    "release:preflight": "node scripts/release/preflight.mjs",
+    "release:smoke": "node scripts/release/smoke-installed-app.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@types/node": "^22.15.0",
+    "eslint": "^9.32.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.39.0",
+    "vitest": "2.1.9"
+  }
+}

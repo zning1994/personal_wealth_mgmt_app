@@ -1,0 +1,51 @@
+appId: com.personalwealth.desktop
+productName: Personal Wealth
+asar: true
+asarUnpack:
+  - "**/*.node"
+  # OCR is launched by Node's worker_threads API. Keep its entry and the
+  # shared contract chunk outside asar so packaged builds can execute it on
+  # both macOS and Windows without relying on ASAR path patching.
+  - "out/ocr/**"
+  - "out/chunks/**"
+extraResources:
+  - from: resources/ocr
+    to: ocr
+    filter:
+      - "**/*"
+files:
+  - out/**
+  - "!node_modules/**"
+  - from: ../../node_modules/.pnpm/better-sqlite3-multiple-ciphers@12.11.1/node_modules/better-sqlite3-multiple-ciphers
+    to: node_modules/better-sqlite3-multiple-ciphers
+  - from: ../../node_modules/.pnpm/bindings@1.5.0/node_modules/bindings
+    to: node_modules/bindings
+  - from: ../../node_modules/.pnpm/file-uri-to-path@1.0.0/node_modules/file-uri-to-path
+    to: node_modules/file-uri-to-path
+  - from: ../../node_modules/.pnpm/@node-rs+argon2@2.0.2/node_modules/@node-rs/argon2
+    to: node_modules/@node-rs/argon2
+  - from: ../../node_modules/.pnpm/@node-rs+argon2-darwin-arm64@2.0.2/node_modules/@node-rs/argon2-darwin-arm64
+    to: node_modules/@node-rs/argon2-darwin-arm64
+directories:
+  output: release
+buildDependenciesFromSource: true
+npmRebuild: true
+mac:
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: ../../build/entitlements.mac.plist
+  entitlementsInherit: ../../build/entitlements.mac.inherit.plist
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
