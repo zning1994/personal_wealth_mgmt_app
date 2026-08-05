@@ -12,6 +12,8 @@ node_modules/
 dist/
 out/
 release/
+!scripts/release/
+!scripts/release/**
 apps/desktop/resources/ocr/*
 !apps/desktop/resources/ocr/.gitkeep
 coverage/
