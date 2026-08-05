@@ -95,6 +95,8 @@ jobs:
         run: pnpm --filter @pwm/desktop prepare:ocr
         env:
           PWM_OCR_REQUIRE_TOOLS: "1"
+      - name: Stage platform native bindings
+        run: pnpm --filter @pwm/desktop prepare:native
       - name: Validate macOS signing secrets
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -142,6 +144,8 @@ jobs:
         run: pnpm --filter @pwm/desktop prepare:ocr
         env:
           PWM_OCR_REQUIRE_TOOLS: "1"
+      - name: Stage platform native bindings
+        run: pnpm --filter @pwm/desktop prepare:native
       - run: pnpm --filter @pwm/desktop exec electron-builder --config electron-builder.yml --win nsis --x64
       - name: Launch packaged Windows app
         run: pnpm --filter @pwm/desktop test:packaged
