@@ -99,6 +99,8 @@ jobs:
         run: pnpm --filter @pwm/desktop prepare:ocr
         env:
           PWM_OCR_REQUIRE_TOOLS: "1"
+      - name: Rebuild platform native dependencies
+        run: pnpm --filter @pwm/desktop rebuild:native
       - name: Stage platform native bindings
         run: pnpm --filter @pwm/desktop prepare:native
       - name: Build desktop app
@@ -193,6 +195,8 @@ jobs:
         run: pnpm --filter @pwm/desktop prepare:ocr
         env:
           PWM_OCR_REQUIRE_TOOLS: "1"
+      - name: Rebuild platform native dependencies
+        run: pnpm --filter @pwm/desktop rebuild:native
       - name: Stage platform native bindings
         run: pnpm --filter @pwm/desktop prepare:native
       - name: Build desktop app
