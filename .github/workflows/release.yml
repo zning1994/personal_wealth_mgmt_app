@@ -93,12 +93,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install OCR build tools
         run: brew install poppler tesseract
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
       - name: Bundle OCR tools
         run: pnpm --filter @pwm/desktop prepare:ocr
         env:
           PWM_OCR_REQUIRE_TOOLS: "1"
       - name: Stage platform native bindings
         run: pnpm --filter @pwm/desktop prepare:native
+      - name: Build desktop app
+        run: pnpm --filter @pwm/desktop build
       - name: Validate macOS signing secrets
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -108,7 +112,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: >-
           node -e "for (const name of ['CSC_LINK','CSC_KEY_PASSWORD','APPLE_ID','APPLE_APP_SPECIFIC_PASSWORD','APPLE_TEAM_ID']) if (!process.env[name]) throw new Error('missing release secret: '+name)"
-      - run: pnpm --filter @pwm/desktop exec electron-builder --config electron-builder.yml --mac dmg zip --${{ matrix.arch }}
+      - run: pnpm --filter @pwm/desktop exec electron-builder --config electron-builder.yml --publish never --mac dmg zip --${{ matrix.arch }}
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -144,14 +148,56 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install OCR build tools
         shell: pwsh
-        run: choco install poppler tesseract --no-progress --yes
+        env:
+          POPPLER_VERSION: "26.02.0-0"
+          POPPLER_SHA256: "993e4a94376ed712fafc7058d724ea0b943d118bbd2305cd9ed55174eb85cda5"
+        run: |
+          choco install tesseract --no-progress --yes
+
+          $archive = Join-Path $env:RUNNER_TEMP "poppler-$env:POPPLER_VERSION.zip"
+          $extractRoot = Join-Path $env:RUNNER_TEMP "poppler-$env:POPPLER_VERSION"
+          $downloadUrl = "https://github.com/oschwartz10612/poppler-windows/releases/download/v$env:POPPLER_VERSION/Release-$env:POPPLER_VERSION.zip"
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archive
+          $actualSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $env:POPPLER_SHA256) {
+            throw "Poppler checksum mismatch: expected $env:POPPLER_SHA256, got $actualSha256"
+          }
+          Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot -Force
+
+          $pdftoppm = Get-ChildItem -LiteralPath $extractRoot -Filter pdftoppm.exe -Recurse -File | Select-Object -First 1
+          if (-not $pdftoppm) { throw "Prebuilt Poppler archive did not contain pdftoppm.exe" }
+
+          $chocolateyRoot = if ($env:ChocolateyInstall) { $env:ChocolateyInstall } else { 'C:\ProgramData\chocolatey' }
+          $tesseractRoots = @(
+            'C:\Program Files\Tesseract-OCR',
+            (Join-Path $chocolateyRoot 'lib\tesseract\tools')
+          )
+          $tesseract = $null
+          foreach ($root in $tesseractRoots) {
+            if (Test-Path -LiteralPath $root) {
+              $tesseract = Get-ChildItem -LiteralPath $root -Filter tesseract.exe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($tesseract) { break }
+            }
+          }
+          if (-not $tesseract) { throw 'Tesseract installation did not contain tesseract.exe' }
+          $tessdata = Join-Path $tesseract.Directory.FullName 'tessdata'
+          if (-not (Test-Path -LiteralPath $tessdata)) { throw "Tesseract tessdata directory not found: $tessdata" }
+
+          "PWM_OCR_PDF_RENDERER_SOURCE=$($pdftoppm.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PWM_OCR_TESSERACT_SOURCE=$($tesseract.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PWM_OCR_TESSDATA_SOURCE=$tessdata" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $pdftoppm.FullName -h 2>&1 | Select-Object -First 1
+          & $tesseract.FullName --version | Select-Object -First 1
       - name: Bundle OCR tools
         run: pnpm --filter @pwm/desktop prepare:ocr
         env:
           PWM_OCR_REQUIRE_TOOLS: "1"
       - name: Stage platform native bindings
         run: pnpm --filter @pwm/desktop prepare:native
-      - run: pnpm --filter @pwm/desktop exec electron-builder --config electron-builder.yml --win nsis --x64
+      - name: Build desktop app
+        run: pnpm --filter @pwm/desktop build
+      - run: pnpm --filter @pwm/desktop exec electron-builder --config electron-builder.yml --publish never --win nsis --x64
       - name: Launch packaged Windows app
         run: pnpm --filter @pwm/desktop test:packaged
       - name: Write unsigned disclosure
