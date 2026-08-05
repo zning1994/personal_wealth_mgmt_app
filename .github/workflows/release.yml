@@ -123,17 +123,26 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - name: Launch packaged macOS app
         run: pnpm --filter @pwm/desktop test:packaged
-      - name: Staple notarization ticket to DMG
+      - name: Notarize and staple macOS DMG
         shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           shopt -s nullglob
           dmgs=(apps/desktop/release/*.dmg)
           if (( ${#dmgs[@]} == 0 )); then
-            echo 'No macOS DMG found to staple' >&2
+            echo 'No macOS DMG found to notarize' >&2
             exit 1
           fi
           for dmg in "${dmgs[@]}"; do
+            xcrun notarytool submit "$dmg" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
             xcrun stapler staple "$dmg"
           done
       - name: Verify signed app bundle
