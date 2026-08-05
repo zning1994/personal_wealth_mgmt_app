@@ -91,6 +91,8 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install OCR build tools
+        run: brew install poppler tesseract
       - name: Bundle OCR tools
         run: pnpm --filter @pwm/desktop prepare:ocr
         env:
@@ -140,6 +142,9 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install OCR build tools
+        shell: pwsh
+        run: choco install poppler tesseract --no-progress --yes
       - name: Bundle OCR tools
         run: pnpm --filter @pwm/desktop prepare:ocr
         env:
