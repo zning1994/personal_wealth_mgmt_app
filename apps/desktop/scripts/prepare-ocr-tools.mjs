@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -64,7 +64,10 @@ function findUnixExecutable(name) {
 
 function copyFile(source, destination) {
   mkdirSync(path.dirname(destination), { recursive: true });
-  cpSync(source, destination);
+  // Homebrew exposes many OCR libraries through absolute symlinks. A release
+  // app must contain the actual library bytes; an external symlink makes the
+  // bundle both non-portable and invalid under codesign --deep --strict.
+  cpSync(realpathSync(source), destination);
 }
 
 function copyDirectory(source, destination) {
@@ -72,8 +75,26 @@ function copyDirectory(source, destination) {
   for (const entry of readdirSync(source)) {
     const from = path.join(source, entry);
     const to = path.join(destination, entry);
-    cpSync(from, to, { recursive: true });
+    cpSync(realpathSync(from), to, { recursive: true });
   }
+}
+
+function findSymbolicLinks(root) {
+  const links = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const candidate = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        links.push(candidate);
+      } else if (entry.isDirectory()) {
+        pending.push(candidate);
+      }
+    }
+  }
+  return links;
 }
 
 function runOtool(binary) {
@@ -193,6 +214,10 @@ if (platform !== "darwin" && platform !== "win32") {
 rmSync(target, { recursive: true, force: true });
 mkdirSync(target, { recursive: true });
 const manifest = platform === "darwin" ? bundleMac() : bundleWindows();
+const symbolicLinks = findSymbolicLinks(target);
+if (symbolicLinks.length > 0) {
+  throw new Error(`OCR bundle contains symbolic links: ${symbolicLinks.join(", ")}`);
+}
 writeFileSync(path.join(target, "ocr-manifest.json"), `${JSON.stringify({ version: 1, ...manifest }, null, 2)}\n`);
 if (!manifest.available) {
   rmSync(target, { recursive: true, force: true });
