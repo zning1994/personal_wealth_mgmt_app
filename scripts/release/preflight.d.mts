@@ -1,0 +1,1 @@
+export declare function preflight(runner: { run(gate: string, command: string): Promise<{ gate: string; command: string; exitCode: number }> }): Promise<{ failures: Array<{ gate: string; command: string; exitCode: number }>; commands: string[]; packageAllowed: boolean }>;

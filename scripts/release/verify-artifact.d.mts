@@ -1,0 +1,1 @@
+export declare function inspectArtifact(inputPath: string, expected?: { architecture?: string }): { path: string; architecture?: string; files: Array<{ path: string; type: string; bytes?: number }>; errors: Array<{ code: string; path?: string; expected?: string; actual?: string }>; sha256?: string };
