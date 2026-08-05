@@ -19,7 +19,9 @@ export async function* recognizeRenderedPages(
   try {
     for (const page of request.pageNumbers) {
       signal.throwIfAborted();
-      const path = resolve(root, `${page}.png`);
+      // LocalPdfPageRenderer writes the page prefix as `page-<n>.png`.
+      // Keep the worker bound to that exact task directory naming contract.
+      const path = resolve(root, `page-${page}.png`);
       if (path !== `${root}${sep}${basename(path)}`) throw new Error("OCR_PATH_SCOPE_MISMATCH");
       const result = await recognizer.recognize(path, request.languages, signal);
       signal.throwIfAborted();

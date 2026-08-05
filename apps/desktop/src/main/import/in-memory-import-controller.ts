@@ -2,15 +2,17 @@ import { app, dialog } from "electron";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
-import type { AccountDto, ActivityOperation, CreateAccountInput, ImportCandidateV1, ImportDraftView, ImportDraftSummary, SelectedSource, WorkspaceId } from "@pwm/contracts";
+import type { AccountDto, ActivityOperation, CreateAccountInput, ImportCandidateV1, ImportDraftView, ImportDraftSummary, SelectedSource, WorkspaceId, ActivityOperationId } from "@pwm/contracts";
 import { parseImportCandidate } from "@pwm/contracts";
 import { CanonicalCsvParser, decimalToMinor, extractPdfText, parseSavedValueWorkbook, type ParserInput } from "@pwm/importer";
-import { CommitImportBatchCommand, type ActivityLogPort, type ImportCommitResult, type ImportCommitTransaction, type ImportCommitUnitOfWork } from "@pwm/application";
+import { activityInverseTargetIds, DEFAULT_INVERSE_RETENTION, CommitImportBatchCommand, type ActivityInverse, type ActivityLogPort, type ActivityRecord, type ImportCommitResult, type ImportCommitTransaction, type ImportCommitUnitOfWork } from "@pwm/application";
 import type { ImportBatchId, SkipCandidateInput, UpdateCandidateInput } from "@pwm/contracts";
 import { createSqlAccountRepository, createSqlLedgerUnitOfWork, SqlActivityLog, SqlImportDraftStore, SqlImportUnitOfWork } from "@pwm/storage";
 import { DesktopImportController, type ImportController, type ImportReviewService, type SelectedSourcePayload, type SourceSelectionPort } from "./import-controller";
-import { openLocalWorkspace } from "../workspace/local-workspace";
+import { openLocalWorkspace, type LocalWorkspace } from "../workspace/local-workspace";
 import { createDesktopLedgerService, createInMemoryLedgerService, type DesktopLedgerService } from "../ledger/ledger-service";
+import { createInMemoryLedgerUnitOfWork } from "../ledger/ledger-service";
+import { createDesktopActivityService, type DesktopActivityService } from "../activity/activity-service";
 import { createInMemoryFinanceService, createSqlFinanceService, type DesktopFinanceService } from "../finance/finance-service";
 import type { PdfOcrPipeline } from "./ocr-pipeline";
 
@@ -32,10 +34,13 @@ class MemoryAccountService implements AccountService {
 }
 
 class MemoryActivityLog implements ActivityLogPort {
-  private latestOperation: ActivityOperation | null = null;
-  async append(operation: ActivityOperation): Promise<void> { this.latestOperation = operation; }
-  async latest(workspaceId: WorkspaceId): Promise<ActivityOperation | null> { return this.latestOperation?.workspaceId === workspaceId ? this.latestOperation : null; }
-  async markUndone(operationId: ActivityOperation["id"], undoneAt: string): Promise<void> { if (this.latestOperation?.id === operationId) this.latestOperation = { ...this.latestOperation, undoneAt, updatedAt: undoneAt }; }
+  private readonly records: ActivityRecord[] = [];
+  async append(operation: ActivityOperation, inverse: ActivityInverse | null = null): Promise<void> { this.records.unshift({ operation, inverse }); }
+  async latest(workspaceId: WorkspaceId): Promise<ActivityOperation | null> { return this.records.find((record) => record.operation.workspaceId === workspaceId)?.operation ?? null; }
+  async list(workspaceId: WorkspaceId, limit = 30): Promise<readonly ActivityOperation[]> { return this.records.filter((record) => record.operation.workspaceId === workspaceId).slice(0, limit).map((record) => record.operation); }
+  async findForUndo(workspaceId: WorkspaceId, operationId: ActivityOperationId): Promise<ActivityRecord | null> { const candidate = this.records.find((record) => record.operation.workspaceId === workspaceId && record.operation.id === operationId) ?? null; if (!candidate?.inverse) return candidate; const targets = new Set(activityInverseTargetIds(candidate.inverse)); const later = this.records.filter((record) => record.operation.createdAt > candidate.operation.createdAt && record.operation.undoneAt === null); return later.some((record) => targets.has(record.operation.entityId) || activityInverseTargetIds(record.inverse).some((id) => targets.has(id))) ? null : candidate; }
+  async latestForUndo(workspaceId: WorkspaceId): Promise<ActivityRecord | null> { const cutoff = Date.now() - DEFAULT_INVERSE_RETENTION.days * 86_400_000; return this.records.filter((record) => record.operation.workspaceId === workspaceId && record.operation.undoable && !record.operation.undoneAt && record.inverse !== null && Date.parse(record.operation.createdAt) >= cutoff).slice(0, DEFAULT_INVERSE_RETENTION.maxOperations)[0] ?? null; }
+  async markUndone(operationId: ActivityOperation["id"], undoneAt: string): Promise<void> { const index = this.records.findIndex((candidate) => candidate.operation.id === operationId); if (index >= 0) { const record = this.records[index]!; this.records[index] = { ...record, operation: { ...record.operation, undoneAt, updatedAt: undoneAt } }; } }
 }
 export class DialogSourceSelection implements SourceSelectionPort {
   private readonly capabilities = new Map<string, Capability>();
@@ -53,6 +58,7 @@ export class MemoryReviewService implements ImportReviewService {
   constructor(private readonly workspaceId: WorkspaceId, private readonly persistence?: DraftPersistence, private readonly sourceDocuments?: import("@pwm/application").SourceDocumentStore, private readonly pdfOcr?: PdfOcrPipeline) {}
   async start(source: SelectedSourcePayload): Promise<ImportDraftView> {
     const sourceDocumentId = randomUUID();
+    const sourceSha256 = createHash("sha256").update(source.bytes).digest("hex");
     const input: ParserInput = { sourceDocumentId, mimeType: source.mimeType, extension: source.extension, prefix: source.bytes.subarray(0, 64), bytes: source.bytes, signal: new AbortController().signal };
     await this.sourceDocuments?.put({ workspaceId: this.workspaceId, bytes: source.bytes, mimeType: source.mimeType, extension: source.extension, retention: "encrypted_copy" });
     let candidates: ImportCandidateV1[] = []; const warnings: string[] = []; let ocrPending = false;
@@ -78,7 +84,7 @@ export class MemoryReviewService implements ImportReviewService {
         }
       }
     }
-    const view: ImportDraftView = { batchId: randomUUID() as ImportBatchId, status: ocrPending ? "needs_ocr" : "needs_review", revision: 0, candidates, skippedRawRecordIds: [], warnings }; this.drafts.set(view.batchId, view); await this.persistence?.create(view, source.displayName); return view;
+    const view: ImportDraftView = { batchId: randomUUID() as ImportBatchId, sourceSha256, status: ocrPending ? "needs_ocr" : "needs_review", revision: 0, candidates, skippedRawRecordIds: [], warnings }; this.drafts.set(view.batchId, view); await this.persistence?.create(view, source.displayName); return view;
   }
   async get(batchId: ImportBatchId) { const value = this.drafts.get(batchId) ?? await this.persistence?.get(batchId) ?? null; if (!value) throw new Error("IMPORT_BATCH_NOT_FOUND"); this.drafts.set(batchId, value); return value; }
   async list(): Promise<readonly ImportDraftSummary[]> { const persisted = await this.persistence?.list(); if (persisted) return persisted; return [...this.drafts.values()].map((draft) => ({ batchId: draft.batchId, status: draft.status, revision: draft.revision, displayName: "Imported statement", updatedAt: new Date().toISOString() })); }
@@ -91,25 +97,29 @@ export class MemoryReviewService implements ImportReviewService {
 }
 
 class MemoryCommitUnitOfWork implements ImportCommitUnitOfWork {
-  private readonly commits = new Map<string, ImportCommitResult>(); private readonly journals: unknown[] = [];
-  async run<T>(work: (transaction: ImportCommitTransaction) => Promise<T>): Promise<T> { return work({ ledger: { saveJournal: async (journal) => { this.journals.push(journal); } }, imports: { findCommit: async (_workspace, key) => this.commits.get(key) ?? null, linkRawRecord: async () => undefined, markCommitted: async (_batch, result, key) => { this.commits.set(key, result); } } }); }
+  private readonly commits = new Map<string, ImportCommitResult>();
+  private readonly sources = new Map<string, ImportCommitResult>();
+  constructor(private readonly ledgerUnitOfWork: ReturnType<typeof createInMemoryLedgerUnitOfWork>) {}
+  async run<T>(work: (transaction: ImportCommitTransaction) => Promise<T>): Promise<T> { return this.ledgerUnitOfWork.run(async ({ ledger }) => work({ ledger, imports: { findCommit: async (_workspace, key) => this.commits.get(key) ?? null, findSourceCommit: async (_workspace, sourceSha256) => this.sources.get(sourceSha256) ?? null, linkRawRecord: async () => undefined, markCommitted: async (_batch, result, key, sourceSha256) => { this.commits.set(key, result); if (sourceSha256) this.sources.set(sourceSha256, result); } } })); }
 }
-export type LocalImportComposition = { controller: ImportController; accounts: AccountService; ledger: DesktopLedgerService; finance: DesktopFinanceService; activity: ActivityLogPort; close: () => Promise<void> };
+export type LocalImportComposition = { controller: ImportController; accounts: AccountService; ledger: DesktopLedgerService; finance: DesktopFinanceService; activity: ActivityLogPort; activityService: DesktopActivityService; workspace?: LocalWorkspace; close: () => Promise<void> };
 
-export function createInMemoryImportController(options: { readonly pdfOcr?: PdfOcrPipeline } = {}): LocalImportComposition { const workspaceId = randomUUID() as WorkspaceId; const reviews = new MemoryReviewService(workspaceId, undefined, undefined, options.pdfOcr); const commits = new CommitImportBatchCommand(new MemoryCommitUnitOfWork(), { journal: () => randomUUID() as never, posting: () => randomUUID() as never }); const activity = new MemoryActivityLog(); return { controller: new DesktopImportController(new DialogSourceSelection(), reviews, commits, workspaceId, activity), accounts: new MemoryAccountService(workspaceId), ledger: createInMemoryLedgerService(workspaceId, activity), finance: createInMemoryFinanceService(workspaceId), activity, close: async () => undefined }; }
+export function createInMemoryImportController(options: { readonly pdfOcr?: PdfOcrPipeline } = {}): LocalImportComposition { const workspaceId = randomUUID() as WorkspaceId; const reviews = new MemoryReviewService(workspaceId, undefined, undefined, options.pdfOcr); const ledgerUnitOfWork = createInMemoryLedgerUnitOfWork(); const commits = new CommitImportBatchCommand(new MemoryCommitUnitOfWork(ledgerUnitOfWork), { journal: () => randomUUID() as never, posting: () => randomUUID() as never }); const activity = new MemoryActivityLog(); const activityService = createDesktopActivityService({ workspaceId, log: activity, unitOfWork: ledgerUnitOfWork }); return { controller: new DesktopImportController(new DialogSourceSelection(), reviews, commits, workspaceId, activity), accounts: new MemoryAccountService(workspaceId), ledger: createInMemoryLedgerService(workspaceId, activity, ledgerUnitOfWork), finance: createInMemoryFinanceService(workspaceId), activity, activityService, close: async () => undefined }; }
 
-export type LocalImportControllerOptions = { readonly pdfOcr?: PdfOcrPipeline };
+export type LocalImportControllerOptions = { readonly pdfOcr?: PdfOcrPipeline; readonly workspacePassword?: string };
 
 export async function createLocalImportController(options: LocalImportControllerOptions = {}): Promise<LocalImportComposition> {
   if (typeof app.getPath !== "function") return createInMemoryImportController(options);
-  const workspace = await openLocalWorkspace();
+  const workspace = await openLocalWorkspace(options.workspacePassword === undefined ? {} : { password: options.workspacePassword });
   const reviews = new MemoryReviewService(workspace.workspaceId as WorkspaceId, new SqlImportDraftStore(workspace.connection, workspace.workspaceId as WorkspaceId), workspace.sourceDocuments, options.pdfOcr);
   const commits = new CommitImportBatchCommand(new SqlImportUnitOfWork(workspace.connection), { journal: () => randomUUID() as never, posting: () => randomUUID() as never });
   const activity = new SqlActivityLog(workspace.connection);
-  const ledger = createDesktopLedgerService({ workspaceId: workspace.workspaceId as WorkspaceId, unitOfWork: createSqlLedgerUnitOfWork(workspace.connection), activity });
+  const ledgerUnitOfWork = createSqlLedgerUnitOfWork(workspace.connection);
+  const ledger = createDesktopLedgerService({ workspaceId: workspace.workspaceId as WorkspaceId, unitOfWork: ledgerUnitOfWork, activity });
+  const activityService = createDesktopActivityService({ workspaceId: workspace.workspaceId as WorkspaceId, log: activity, unitOfWork: ledgerUnitOfWork });
   const sqlAccounts = createSqlAccountRepository(workspace.connection, { account: () => randomUUID() as never });
   const accounts: AccountService = { list: () => sqlAccounts.list(workspace.workspaceId), create: (input) => sqlAccounts.create({ ...input, workspaceId: workspace.workspaceId as never }) };
   if ((await accounts.list()).length === 0) { await accounts.create({ name: "Cash", kind: "asset", currency: "AED" as never }); await accounts.create({ name: "Uncategorized", kind: "expense", currency: "AED" as never }); }
   const finance = createSqlFinanceService({ workspaceId: workspace.workspaceId as WorkspaceId, connection: workspace.connection });
-  return { controller: new DesktopImportController(new DialogSourceSelection(), reviews, commits, workspace.workspaceId as WorkspaceId, activity), accounts, ledger, finance, activity, close: workspace.close };
+  return { controller: new DesktopImportController(new DialogSourceSelection(), reviews, commits, workspace.workspaceId as WorkspaceId, activity), accounts, ledger, finance, activity, activityService, workspace, close: workspace.close };
 }

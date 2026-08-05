@@ -8,8 +8,11 @@ asarUnpack:
   # both macOS and Windows without relying on ASAR path patching.
   - "out/ocr/**"
   - "out/chunks/**"
-  - "out/ocr/**"
-  - "out/chunks/**"
+extraResources:
+  - from: resources/ocr
+    to: ocr
+    filter:
+      - "**/*"
 files:
   - out/**
   - "!node_modules/**"

@@ -12,10 +12,11 @@
   "scripts": {
     "dev": "concurrently -k \"electron-vite build --watch\" \"wait-on out/renderer/index.html && electronmon out/main/index.js\"",
     "build": "electron-vite build",
+    "prepare:ocr": "node scripts/prepare-ocr-tools.mjs",
     "smoke:dist": "node scripts/assert-dist.mjs",
     "test:e2e": "pnpm rebuild:native && pnpm build && playwright test",
     "rebuild:native": "electron-rebuild --version 43.2.0 --module-dir ../.. --which-module better-sqlite3-multiple-ciphers --force --build-from-source",
-    "package:dir": "pnpm rebuild:native && pnpm build && electron-builder --dir",
+    "package:dir": "pnpm rebuild:native && pnpm prepare:ocr && pnpm build && electron-builder --dir",
     "test:packaged": "node scripts/test-packaged.mjs",
     "package:acceptance": "pnpm package:dir && pnpm test:packaged",
     "test": "vitest run",

@@ -31,6 +31,12 @@ body {
     #f6f8f6;
 }
 
+.workspace-gate { min-height: 100vh; display: grid; place-items: center; padding: 2rem; background: #f1f6f4; }
+.workspace-gate-card { width: min(100%, 30rem); display: grid; gap: 1rem; padding: 2rem; background: rgba(255,255,255,.92); border: 1px solid #b9cbc7; border-radius: .8rem; box-shadow: 0 1rem 3rem rgba(25,58,61,.08); }
+.workspace-gate-card h1 { margin: 0; color: #102f3a; font-size: clamp(1.8rem, 5vw, 2.8rem); }
+.workspace-gate-card label { display: grid; gap: .35rem; color: #52686c; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
+.workspace-gate-card input { min-height: 2.5rem; padding: .5rem .65rem; border: 1px solid #b9cbc7; border-radius: .5rem; background: #fff; font: inherit; }
+
 button,
 a,
 input,
@@ -331,9 +337,17 @@ td[data-direction="debit"] { color: #9b6928; }
 .transfer-suggestions p { margin: 0; }
 .transfer-badge { display: inline-block; margin-left: .5rem; padding: .15rem .35rem; color: #167c78; background: #e4f2ef; border-radius: .25rem; font-size: .68rem; }
 .row-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.compact-control select { max-width: 10rem; padding: .35rem .5rem; font-size: .78rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .text-action { padding: .2rem .35rem; color: #167c78; background: transparent; border: 0; cursor: pointer; font: inherit; font-size: .75rem; text-decoration: underline; }
 .text-action.danger { color: #9b3d34; }
 .empty-state { margin: 1rem 0 0; color: #52686c; font-size: .85rem; }
+.workspace-settings { margin-top: 1rem; }
+.workspace-actions { align-items: end; }
+.activity-history { display: grid; gap: .6rem; margin-top: .8rem; }
+.activity-history .review-heading { margin: 0; }
+.activity-history h3 { margin: 0; color: #102f3a; font-size: 1rem; }
+.activity-history small { color: #6d7d7f; }
 
 .footer-line {
   min-height: 4.25rem;

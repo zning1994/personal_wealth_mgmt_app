@@ -1,8 +1,16 @@
 import type { ActivityOperation, ActivityOperationId, WorkspaceId } from "@pwm/contracts";
+import type { ActivityInverse, ActivityRecord } from "./inverse";
 
 export type { ActivityOperation } from "@pwm/contracts";
 export type ActivityKind = ActivityOperation["kind"];
-export interface ActivityLogPort { append?(operation: ActivityOperation): Promise<void>; latest(workspaceId: WorkspaceId): Promise<ActivityOperation | null>; markUndone(operationId: ActivityOperationId, undoneAt: string): Promise<void> }
+export interface ActivityLogPort {
+  append?(operation: ActivityOperation, inverse?: ActivityInverse | null): Promise<void>;
+  latest(workspaceId: WorkspaceId): Promise<ActivityOperation | null>;
+  list?(workspaceId: WorkspaceId, limit?: number): Promise<readonly ActivityOperation[]>;
+  latestForUndo?(workspaceId: WorkspaceId): Promise<ActivityRecord | null>;
+  findForUndo?(workspaceId: WorkspaceId, operationId: ActivityOperationId): Promise<ActivityRecord | null>;
+  markUndone(operationId: ActivityOperationId, undoneAt: string): Promise<void>;
+}
 export interface ActivityCompensator { compensate(operation: ActivityOperation): Promise<void> }
 
 export class UndoRecentOperationCommand {

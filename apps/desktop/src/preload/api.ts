@@ -40,12 +40,18 @@ import {
   type DeleteJournalInput,
   type LinkTransferInput,
   type UnlinkTransferInput,
+  type UpdateJournalInput,
+  type ClassifyJournalInput,
+  type MergeJournalInput,
   LedgerJournalViewSchema,
   TransferSuggestionSchema,
   ListLedgerInputSchema,
   DeleteJournalInputSchema,
   LinkTransferInputSchema,
   UnlinkTransferInputSchema,
+  UpdateJournalInputSchema,
+  ClassifyJournalInputSchema,
+  MergeJournalInputSchema,
   type FinanceApi,
   type FinanceOverviewInput,
   type FinanceUpsertBudgetInput,
@@ -65,6 +71,15 @@ import {
   type FinanceSetFxOverrideInput,
   type ActivityApi,
   ActivityOperationSchema,
+  type WorkspaceApi,
+  WorkspaceStatusSchema,
+  WorkspaceUnlockInputSchema,
+  WorkspaceAppLockInputSchema,
+  WorkspaceBackupPasswordSchema,
+  WorkspaceBackupResultSchema,
+  WorkspaceRestoreResultSchema,
+  ActivityListInputSchema,
+  UndoActivityInputSchema,
 } from "@pwm/contracts";
 
 export interface DesktopShellApi {
@@ -78,6 +93,7 @@ export interface DesktopShellApi {
   readonly ledger?: LedgerApi;
   readonly finance?: FinanceApi;
   readonly activity?: ActivityApi;
+  readonly workspace: WorkspaceApi;
 }
 
 type InvokableCommand = "app:get-info" | "task:start" | "task:cancel";
@@ -117,6 +133,9 @@ export function createDesktopApi(
     list: async (input?: ListLedgerInput) => (await ipc.invoke("ledger:list", ListLedgerInputSchema.parse(input ?? {})) as unknown[]).map((item) => LedgerJournalViewSchema.parse(item)),
     suggestions: async () => (await ipc.invoke("ledger:suggestions", undefined) as unknown[]).map((item) => TransferSuggestionSchema.parse(item)),
     delete: async (input: DeleteJournalInput) => { await ipc.invoke("ledger:delete", DeleteJournalInputSchema.parse(input)); },
+    update: async (input: UpdateJournalInput) => { await ipc.invoke("ledger:update", UpdateJournalInputSchema.parse(input)); },
+    classify: async (input: ClassifyJournalInput) => { await ipc.invoke("ledger:classify", ClassifyJournalInputSchema.parse(input)); },
+    merge: async (input: MergeJournalInput) => { await ipc.invoke("ledger:merge", MergeJournalInputSchema.parse(input)); },
     linkTransfer: async (input: LinkTransferInput) => { await ipc.invoke("ledger:link-transfer", LinkTransferInputSchema.parse(input)); },
     unlinkTransfer: async (input: UnlinkTransferInput) => { await ipc.invoke("ledger:unlink-transfer", UnlinkTransferInputSchema.parse(input)); },
   };
@@ -133,6 +152,16 @@ export function createDesktopApi(
   };
   const activity: ActivityApi = {
     latest: async () => { const value = await ipc.invoke("activity:latest", undefined); return value === null ? null : ActivityOperationSchema.parse(value); },
+    list: async (input) => (await ipc.invoke("activity:list", ActivityListInputSchema.parse(input ?? {})) as unknown[]).map((value) => ActivityOperationSchema.parse(value)),
+    undo: async (input) => ActivityOperationSchema.parse(await ipc.invoke("activity:undo", UndoActivityInputSchema.parse(input ?? {}))),
+  };
+  const workspace: WorkspaceApi = {
+    status: async () => WorkspaceStatusSchema.parse(await ipc.invoke("workspace:status", undefined)),
+    unlock: async (input) => WorkspaceStatusSchema.parse(await ipc.invoke("workspace:unlock", WorkspaceUnlockInputSchema.parse(input))),
+    enableAppLock: async (input) => WorkspaceStatusSchema.parse(await ipc.invoke("workspace:enable-app-lock", WorkspaceAppLockInputSchema.parse(input))),
+    disableAppLock: async (input) => WorkspaceStatusSchema.parse(await ipc.invoke("workspace:disable-app-lock", WorkspaceAppLockInputSchema.parse(input))),
+    createBackup: async (input) => WorkspaceBackupResultSchema.parse(await ipc.invoke("workspace:create-backup", WorkspaceBackupPasswordSchema.parse(input))),
+    restoreBackup: async (input) => WorkspaceRestoreResultSchema.parse(await ipc.invoke("workspace:restore-backup", WorkspaceBackupPasswordSchema.parse(input))),
   };
   return Object.freeze({
     getAppInfo: () => invoke("app:get-info", {}),
@@ -155,5 +184,6 @@ export function createDesktopApi(
     ledger,
     finance,
     activity,
+    workspace,
   });
 }

@@ -19,3 +19,4 @@ export * from "./desktop/accounts-api";
 export * from "./desktop/ledger-api";
 export * from "./desktop/finance-api";
 export * from "./desktop/activity-api";
+export * from "./desktop/workspace-api";

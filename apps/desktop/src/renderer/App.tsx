@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type JSX } from "react";
 import { I18nextProvider, useTranslation } from "react-i18next";
-import type { AccountDto, ActivityOperation, AppInfo, CommitImportInput, ImportDraftView, LlmSettingsView, LlmProviderDto, TransmissionPreview, LedgerJournalView, TransferSuggestion, FinanceOverview, FinanceBudgetProgress, FinanceGoalProgress } from "@pwm/contracts";
+import type { AccountDto, ActivityOperation, AppInfo, CommitImportInput, ImportDraftView, LlmSettingsView, LlmProviderDto, TransmissionPreview, LedgerJournalView, TransferSuggestion, FinanceOverview, FinanceBudgetProgress, FinanceGoalProgress, WorkspaceStatus } from "@pwm/contracts";
 import { createI18n, type SupportedLocale } from "./i18n";
 
 export interface AppProps {
@@ -110,10 +110,17 @@ function Shell({ locale }: AppProps): JSX.Element {
   const [goalTarget, setGoalTarget] = useState("");
   const [goalAccountId, setGoalAccountId] = useState("");
   const [latestActivity, setLatestActivity] = useState<ActivityOperation | null>(null);
+  const [activityHistory, setActivityHistory] = useState<readonly ActivityOperation[]>([]);
+  const [workspacePassword, setWorkspacePassword] = useState("");
+  const [backupPassword, setBackupPassword] = useState("");
+  const [securityBusy, setSecurityBusy] = useState(false);
   const [fxFrom, setFxFrom] = useState("");
   const [fxTo, setFxTo] = useState("AED");
   const [fxNumerator, setFxNumerator] = useState("");
   const [fxDenominator, setFxDenominator] = useState("1");
+  const [editingJournalId, setEditingJournalId] = useState<string | null>(null);
+  const [editingDate, setEditingDate] = useState("");
+  const [editingDescription, setEditingDescription] = useState("");
 
   useEffect(() => { const llm = window.wealth.llm; if (!llm) return; void llm.getSettings().then(setLlmSettings, () => setLlmSettings({ providers: [] })); }, []);
   useEffect(() => { const accountApi = window.wealth.accounts; if (!accountApi) return; void accountApi.list().then(setAccounts, () => setAccounts([])); }, []);
@@ -129,14 +136,48 @@ function Shell({ locale }: AppProps): JSX.Element {
   async function refreshActivity(): Promise<void> {
     const activity = window.wealth.activity;
     if (!activity) return;
-    try { setLatestActivity(await activity.latest()); } catch { setLatestActivity(null); }
+    try { const [latest, history] = await Promise.all([activity.latest(), activity.list({ limit: 30 })]); setLatestActivity(latest); setActivityHistory(history); } catch { setLatestActivity(null); setActivityHistory([]); }
+  }
+
+  async function undoLatest(): Promise<void> {
+    const activity = window.wealth.activity;
+    const candidate = activityHistory.find((operation) => operation.undoable && operation.undoneAt === null);
+    if (!activity || !candidate) return;
+    setSecurityBusy(true); setNotice(null);
+    try { await activity.undo({ operationId: candidate.id }); await refreshLedger(); await refreshActivity(); setNotice(t("activity.undone")); }
+    catch { setNotice(t("activity.undoBlocked")); }
+    finally { setSecurityBusy(false); }
+  }
+
+  async function toggleAppLock(action: "enable" | "disable"): Promise<void> {
+    if (workspacePassword.length < 8) return;
+    setSecurityBusy(true); setNotice(null);
+    try { if (action === "enable") await window.wealth.workspace.enableAppLock({ password: workspacePassword }); else await window.wealth.workspace.disableAppLock({ password: workspacePassword }); setWorkspacePassword(""); setNotice(t(action === "enable" ? "workspace.lockEnabled" : "workspace.lockDisabled")); }
+    catch { setNotice(t("workspace.securityError")); }
+    finally { setSecurityBusy(false); }
+  }
+
+  async function createBackup(): Promise<void> {
+    if (backupPassword.length < 8) return;
+    setSecurityBusy(true); setNotice(null);
+    try { const result = await window.wealth.workspace.createBackup({ password: backupPassword }); setBackupPassword(""); setNotice(t("workspace.backupCreated", { path: result.path })); }
+    catch { setNotice(t("workspace.backupError")); }
+    finally { setSecurityBusy(false); }
+  }
+
+  async function restoreBackup(): Promise<void> {
+    if (backupPassword.length < 8) return;
+    setSecurityBusy(true); setNotice(null);
+    try { const result = await window.wealth.workspace.restoreBackup({ password: backupPassword }); setBackupPassword(""); setNotice(t("workspace.backupRestored", { count: result.journalCount })); }
+    catch { setNotice(t("workspace.backupError")); }
+    finally { setSecurityBusy(false); }
   }
 
   async function refreshFinance(month = financeMonth): Promise<void> {
     const finance = window.wealth.finance;
     if (!finance) return;
     try {
-      const [overview, budgets, goals] = await Promise.all([finance.overview({ month }), finance.listBudgets({ month }), finance.listGoals()]);
+      const [overview, budgets, goals] = await Promise.all([finance.overview({ month, offline: false }), finance.listBudgets({ month }), finance.listGoals()]);
       setFinanceOverview(overview); setBudgetProgress(budgets); setGoalProgress(goals);
     } catch { setNotice(t("finance.error")); }
   }
@@ -169,6 +210,42 @@ function Shell({ locale }: AppProps): JSX.Element {
     const ledger = window.wealth.ledger;
     if (!ledger) return;
     try { const [entries, suggestions] = await Promise.all([ledger.list(), ledger.suggestions()]); setJournals(entries); setTransferSuggestions(suggestions); await refreshActivity(); } catch { setNotice(t("ledger.error")); }
+  }
+
+  function beginEditJournal(journal: LedgerJournalView): void {
+    setEditingJournalId(journal.id);
+    setEditingDate(journal.occurredOn);
+    setEditingDescription(journal.description);
+  }
+
+  function cancelEditJournal(): void {
+    setEditingJournalId(null);
+    setEditingDate("");
+    setEditingDescription("");
+  }
+
+  async function saveJournalEdit(journal: LedgerJournalView): Promise<void> {
+    const ledger = window.wealth.ledger;
+    if (!ledger || !editingDate || !editingDescription.trim()) return;
+    try {
+      await ledger.update({ id: journal.id, expectedVersion: journal.version, occurredOn: editingDate, description: editingDescription.trim(), postings: journal.postings.map((posting) => ({ id: posting.id as never, accountId: posting.accountId, amountMinor: posting.amountMinor, currency: posting.currency, role: posting.role })) });
+      cancelEditJournal();
+      await refreshLedger();
+    } catch { setNotice(t("ledger.error")); }
+  }
+
+  async function classifyJournal(journal: LedgerJournalView, categoryAccountId: string): Promise<void> {
+    const ledger = window.wealth.ledger;
+    if (!ledger || !categoryAccountId) return;
+    try { await ledger.classify({ id: journal.id, expectedVersion: journal.version, categoryAccountId: categoryAccountId as never }); await refreshLedger(); }
+    catch { setNotice(t("ledger.error")); }
+  }
+
+  async function mergeDuplicate(survivor: LedgerJournalView, duplicate: LedgerJournalView): Promise<void> {
+    const ledger = window.wealth.ledger;
+    if (!ledger || !window.confirm(t("ledger.mergeConfirm"))) return;
+    try { await ledger.merge({ survivorId: survivor.id, duplicateId: duplicate.id, survivorExpectedVersion: survivor.version, duplicateExpectedVersion: duplicate.version }); await refreshLedger(); }
+    catch { setNotice(t("ledger.error")); }
   }
 
   async function saveLlmProvider(): Promise<void> {
@@ -208,9 +285,9 @@ function Shell({ locale }: AppProps): JSX.Element {
     if (!cashAccount || !categoryAccount) { setNotice(t("import.accountsRequired")); return; }
     setBusy(true); setNotice(null);
     try {
-      const input: CommitImportInput = { workspaceId: await imports.getWorkspaceId(), batchId: draft.batchId, idempotencyKey: crypto.randomUUID(), entries: draft.candidates.map((candidate) => ({ rawRecordIds: [candidate.rawRecordId], occurredOn: candidate.transactionDate.value, description: candidate.description.value, postings: [{ accountId: cashAccount.id, amountMinor: candidate.amountMinor.value, currency: candidate.currency.value }, { accountId: categoryAccount.id, amountMinor: (-BigInt(candidate.amountMinor.value)).toString(), currency: candidate.currency.value }] })) };
+      const input: CommitImportInput = { workspaceId: await imports.getWorkspaceId(), batchId: draft.batchId, sourceSha256: draft.sourceSha256, idempotencyKey: crypto.randomUUID(), entries: draft.candidates.map((candidate) => ({ rawRecordIds: [candidate.rawRecordId], occurredOn: candidate.transactionDate.value, description: candidate.description.value, postings: [{ accountId: cashAccount.id, amountMinor: candidate.amountMinor.value, currency: candidate.currency.value }, { accountId: categoryAccount.id, amountMinor: (-BigInt(candidate.amountMinor.value)).toString(), currency: candidate.currency.value }] })) };
       await imports.commit(input); setDraft({ ...draft, status: "committed" }); await refreshLedger(); await refreshActivity(); setNotice(t("import.committed"));
-    } catch { setNotice(t("import.commitError")); }
+    } catch (error: unknown) { setNotice(error instanceof Error && error.message === "IMPORT_SOURCE_ALREADY_COMMITTED" ? t("import.duplicate") : t("import.commitError")); }
     finally { setBusy(false); }
   }
 
@@ -256,9 +333,9 @@ function Shell({ locale }: AppProps): JSX.Element {
           {draft.warnings.map((warning) => <p className="review-warning" key={warning}>{warning}</p>)}
           {accounts.length === 0 ? <p className="review-warning">{t("import.accountsRequired")}</p> : null}
           <div className="table-wrap"><table><thead><tr><th>{t("review.date")}</th><th>{t("review.description")}</th><th>{t("review.amount")}</th><th>{t("review.currency")}</th></tr></thead><tbody>{draft.candidates.map((candidate) => <tr key={candidate.rawRecordId}><td>{candidate.transactionDate.value}</td><td>{candidate.description.value}</td><td data-direction={candidate.direction.value}>{candidate.amountMinor.value}</td><td>{candidate.currency.value}</td></tr>)}</tbody></table></div>
-          <div className="ai-review">
+          {draft.status === "needs_ocr" ? <p className="review-warning">{t("review.ocrRequired")}</p> : <div className="ai-review">
             {!aiPreview ? <button type="button" className="secondary-action" onClick={() => void previewAiImport()} disabled={aiBusy || !window.wealth.llm}>{aiBusy ? t("llm.analyzing") : t("llm.previewImport")}</button> : <><p className="review-warning">{t("llm.previewNotice", { count: aiPreview.textCharacters })}</p><pre className="transmission-preview">{aiPreview.redactedText}</pre><button type="button" className="secondary-action" onClick={() => void sendAiImport()} disabled={aiBusy}>{aiBusy ? t("llm.analyzing") : t("llm.sendImport")}</button>{aiSuggestionCount > 0 ? <p className="inline-notice">{t("llm.analysisComplete", { count: aiSuggestionCount })}</p> : null}</>}
-          </div>
+          </div>}
           {draft.status !== "committed" ? <button type="button" className="primary-action" onClick={() => void commitDraft()} disabled={busy || draft.candidates.length === 0}>{t("review.commit")}</button> : null}
         </section> : null}
 
@@ -273,7 +350,7 @@ function Shell({ locale }: AppProps): JSX.Element {
         <section className="transactions-panel" aria-labelledby="transactions-title">
           <div className="review-heading"><div><p className="utility-label">{t("ledger.label")}</p><h2 id="transactions-title">{t("ledger.title")}</h2></div><span className="review-count">{journals.length} {t("ledger.rows")}</span></div>
           {transferSuggestions.length > 0 ? <div className="transfer-suggestions" role="status"><p>{t("ledger.suggestions", { count: transferSuggestions.length })}</p>{transferSuggestions.slice(0, 5).map((suggestion) => <button key={`${suggestion.leftJournalId}:${suggestion.rightJournalId}`} type="button" className="secondary-action" onClick={async () => { const ledger = window.wealth.ledger; if (!ledger) return; try { await ledger.linkTransfer({ journalIds: [suggestion.leftJournalId, suggestion.rightJournalId], linkId: crypto.randomUUID() }); await refreshLedger(); } catch { setNotice(t("ledger.error")); } }}>{t("ledger.pair", { score: suggestion.score })}</button>)}</div> : null}
-          {journals.length === 0 ? <p className="empty-state">{t("ledger.empty")}</p> : <div className="table-wrap"><table><thead><tr><th>{t("ledger.date")}</th><th>{t("ledger.description")}</th><th>{t("ledger.amount")}</th><th>{t("ledger.actions")}</th></tr></thead><tbody>{journals.map((journal) => { const principal = journal.postings.find((posting) => posting.role === "principal") ?? journal.postings[0]; const counterpart = journal.transferLinkId ? journals.find((item) => item.transferLinkId === journal.transferLinkId && item.id !== journal.id) : undefined; return <tr key={journal.id}><td>{journal.occurredOn}</td><td>{journal.description}{journal.transferLinkId ? <span className="transfer-badge">{t("ledger.paired")}</span> : null}</td><td data-direction={principal && BigInt(principal.amountMinor) < 0n ? "debit" : "credit"}>{principal ? `${principal.amountMinor} ${principal.currency}` : "—"}</td><td className="row-actions">{counterpart ? <button type="button" className="text-action" onClick={async () => { const ledger = window.wealth.ledger; if (!ledger) return; try { await ledger.unlinkTransfer({ journalIds: [journal.id, counterpart.id] }); await refreshLedger(); } catch { setNotice(t("ledger.error")); } }}>{t("ledger.unpair")}</button> : null}<button type="button" className="text-action danger" onClick={async () => { const ledger = window.wealth.ledger; if (!ledger) return; try { await ledger.delete({ id: journal.id, expectedVersion: journal.version }); await refreshLedger(); } catch { setNotice(t("ledger.error")); } }}>{t("ledger.delete")}</button></td></tr>; })}</tbody></table></div>}
+          {journals.length === 0 ? <p className="empty-state">{t("ledger.empty")}</p> : <div className="table-wrap"><table><thead><tr><th>{t("ledger.date")}</th><th>{t("ledger.description")}</th><th>{t("ledger.amount")}</th><th>{t("ledger.actions")}</th></tr></thead><tbody>{journals.map((journal) => { const principal = journal.postings.find((posting) => posting.role === "principal") ?? journal.postings[0]; const counterpart = journal.transferLinkId ? journals.find((item) => item.transferLinkId === journal.transferLinkId && item.id !== journal.id) : undefined; const duplicate = journals.find((item) => item.id !== journal.id && item.deletedAt === null && item.transferLinkId === null && journal.transferLinkId === null && item.occurredOn === journal.occurredOn && item.description.trim().toLowerCase() === journal.description.trim().toLowerCase() && item.postings.length === journal.postings.length && item.postings.every((posting, index) => posting.amountMinor === journal.postings[index]?.amountMinor && posting.currency === journal.postings[index]?.currency)); const category = journal.postings.find((posting) => posting.role === "category"); const editing = editingJournalId === journal.id; return <tr key={journal.id}><td>{editing ? <input type="date" value={editingDate} onChange={(event) => setEditingDate(event.target.value)} aria-label={`${t("ledger.date")} ${journal.description}`} /> : journal.occurredOn}</td><td>{editing ? <input value={editingDescription} onChange={(event) => setEditingDescription(event.target.value)} aria-label={`${t("ledger.description")} ${journal.description}`} /> : <>{journal.description}{journal.transferLinkId ? <span className="transfer-badge">{t("ledger.paired")}</span> : null}</>}</td><td data-direction={principal && BigInt(principal.amountMinor) < 0n ? "debit" : "credit"}>{principal ? `${principal.amountMinor} ${principal.currency}` : "—"}</td><td className="row-actions"><label className="compact-control"><span className="sr-only">{t("ledger.classify")} {journal.description}</span><select value={category?.accountId ?? ""} onChange={(event) => void classifyJournal(journal, event.target.value)}><option value="">{t("ledger.unclassified")}</option>{accounts.filter((account) => account.kind === "expense" || account.kind === "income").map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>{editing ? <><button type="button" className="text-action" onClick={() => void saveJournalEdit(journal)}>{t("ledger.save")}</button><button type="button" className="text-action" onClick={cancelEditJournal}>{t("ledger.cancel")}</button></> : <button type="button" className="text-action" onClick={() => beginEditJournal(journal)}>{t("ledger.edit")}</button>}{counterpart ? <button type="button" className="text-action" onClick={async () => { const ledger = window.wealth.ledger; if (!ledger) return; try { await ledger.unlinkTransfer({ journalIds: [journal.id, counterpart.id] }); await refreshLedger(); } catch { setNotice(t("ledger.error")); } }}>{t("ledger.unpair")}</button> : null}{duplicate && journal.id < duplicate.id ? <button type="button" className="text-action" onClick={() => void mergeDuplicate(journal, duplicate)}>{t("ledger.merge")}</button> : null}<button type="button" className="text-action danger" onClick={async () => { const ledger = window.wealth.ledger; if (!ledger) return; try { await ledger.delete({ id: journal.id, expectedVersion: journal.version }); await refreshLedger(); } catch { setNotice(t("ledger.error")); } }}>{t("ledger.delete")}</button></td></tr>; })}</tbody></table></div>}
         </section>
 
         <section className="settings-panel" aria-labelledby="llm-title">
@@ -288,6 +365,18 @@ function Shell({ locale }: AppProps): JSX.Element {
           </div>
           <button type="button" className="primary-action" onClick={() => void saveLlmProvider()} disabled={llmBusy || !window.wealth.llm}>{llmBusy ? t("llm.saving") : t("llm.save")}</button>
           {llmSettings?.providers.length ? <p className="inline-notice">{t("llm.configured", { count: llmSettings.providers.length })}</p> : null}
+        </section>
+
+        <section className="settings-panel workspace-settings" aria-labelledby="workspace-settings-title">
+          <p className="utility-label">{t("workspace.label")}</p>
+          <h2 id="workspace-settings-title">{t("workspace.settingsTitle")}</h2>
+          <div className="settings-grid">
+            <label>{t("workspace.password")}<input type="password" autoComplete="new-password" value={workspacePassword} onChange={(event) => setWorkspacePassword(event.target.value)} placeholder={t("workspace.passwordHint")} /></label>
+            <div className="row-actions workspace-actions"><button type="button" className="secondary-action" onClick={() => void toggleAppLock("enable")} disabled={securityBusy || workspacePassword.length < 8}>{t("workspace.enableLock")}</button><button type="button" className="secondary-action" onClick={() => void toggleAppLock("disable")} disabled={securityBusy || workspacePassword.length < 8}>{t("workspace.disableLock")}</button></div>
+            <label>{t("workspace.backupPassword")}<input type="password" autoComplete="new-password" value={backupPassword} onChange={(event) => setBackupPassword(event.target.value)} placeholder={t("workspace.passwordHint")} /></label>
+            <div className="row-actions workspace-actions"><button type="button" className="secondary-action" onClick={() => void createBackup()} disabled={securityBusy || backupPassword.length < 8}>{t("workspace.createBackup")}</button><button type="button" className="secondary-action" onClick={() => void restoreBackup()} disabled={securityBusy || backupPassword.length < 8}>{t("workspace.restoreBackup")}</button></div>
+          </div>
+          <div className="activity-history"><div className="review-heading"><h3>{t("activity.history")}</h3><button type="button" className="text-action" onClick={() => void undoLatest()} disabled={securityBusy || !activityHistory.some((operation) => operation.undoable && operation.undoneAt === null)}>{t("activity.undoLatest")}</button></div>{activityHistory.length === 0 ? <p className="empty-state">{t("activity.none")}</p> : <ul className="finance-list">{activityHistory.slice(0, 8).map((operation) => <li key={operation.id}><span>{operation.summary}{operation.undoneAt ? ` · ${t("activity.undoneLabel")}` : ""}</span><small>{operation.createdAt}</small></li>)}</ul>}</div>
         </section>
       </main>
 
@@ -304,7 +393,60 @@ export function App({ locale }: AppProps): JSX.Element {
 
   return (
     <I18nextProvider i18n={i18n}>
-      <Shell locale={locale} />
+      <WorkspaceGate locale={locale} />
     </I18nextProvider>
   );
+}
+
+function WorkspaceGate({ locale }: AppProps): JSX.Element {
+  const { t } = useTranslation();
+  const [status, setStatus] = useState<WorkspaceStatus | null>(null);
+  const [password, setPassword] = useState("");
+  const [backupPassword, setBackupPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { void window.wealth.workspace.status().then(setStatus, () => setError(t("workspace.statusError"))); }, [t]);
+
+  async function unlock(): Promise<void> {
+    if (password.length < 8) return;
+    setBusy(true); setError(null);
+    try { setStatus(await window.wealth.workspace.unlock({ password })); setPassword(""); }
+    catch { setError(t("workspace.invalidPassword")); }
+    finally { setBusy(false); }
+  }
+
+  async function restoreBackup(): Promise<void> {
+    if (backupPassword.length < 8) return;
+    setBackupBusy(true); setError(null);
+    try {
+      const result = await window.wealth.workspace.restoreBackup({ password: backupPassword });
+      setBackupPassword("");
+      setError(t("workspace.backupRestored", { count: result.journalCount }));
+    } catch {
+      setError(t("workspace.backupError"));
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  if (status?.state === "ready") return <Shell locale={locale} />;
+  return <div className="workspace-gate" lang={locale}>
+    <div className="workspace-gate-card" role="main">
+      <p className="eyebrow">{t("workspace.label")}</p>
+      <h1>{status?.state === "locked" ? t("workspace.unlockTitle") : status?.state === "recovery" ? t("workspace.recoveryTitle") : t("workspace.loadingTitle")}</h1>
+      {status?.state === "locked" ? <>
+        <p>{t("workspace.unlockBody")}</p>
+        <label>{t("workspace.password")}<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void unlock(); }} /></label>
+        <button type="button" className="primary-action" onClick={() => void unlock()} disabled={busy || password.length < 8}>{busy ? t("workspace.unlocking") : t("workspace.unlock")}</button>
+        {error ? <p className="inline-notice" role="alert">{error}</p> : null}
+      </> : status?.state === "recovery" ? <p role="alert">{t("workspace.recoveryBody")}</p> : <p>{error ?? t("workspace.loadingBody")}</p>}
+      {status?.state !== undefined && status?.state !== null ? <div className="workspace-recovery-actions">
+        <label>{t("workspace.backupPassword")}<input type="password" autoComplete="new-password" value={backupPassword} onChange={(event) => setBackupPassword(event.target.value)} placeholder={t("workspace.passwordHint")} /></label>
+        <button type="button" className="secondary-action" onClick={() => void restoreBackup()} disabled={backupBusy || backupPassword.length < 8}>{backupBusy ? t("workspace.restoringBackup") : t("workspace.restoreRecovery")}</button>
+        {error && status?.state !== "locked" ? <p className="inline-notice" role="status">{error}</p> : null}
+      </div> : null}
+    </div>
+  </div>;
 }

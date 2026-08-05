@@ -11,6 +11,7 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "build": "pnpm -r build",
+    "prepare:ocr": "pnpm --filter @pwm/desktop prepare:ocr",
     "smoke:dist": "pnpm --filter @pwm/desktop smoke:dist",
     "test:e2e": "pnpm --filter @pwm/desktop test:e2e",
     "package:dir": "pnpm --filter @pwm/desktop package:dir",

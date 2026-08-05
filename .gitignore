@@ -12,6 +12,8 @@ node_modules/
 dist/
 out/
 release/
+apps/desktop/resources/ocr/*
+!apps/desktop/resources/ocr/.gitkeep
 coverage/
 .vite/
 test-results/

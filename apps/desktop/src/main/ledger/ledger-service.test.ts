@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createJournal, type JournalEntry } from "@pwm/domain";
 import type { LedgerRepository, LedgerUnitOfWork } from "@pwm/application";
 import { createDesktopLedgerService } from "./ledger-service";
+import type { ActivityLogPort, ActivityRecord } from "@pwm/application";
 
 const workspaceId = "018f4f7e-8ead-7c0d-0000-000000000001" as never;
 const accountA = "018f4f7e-8ead-7c0d-0000-000000000002" as never;
@@ -14,7 +15,7 @@ function entry(id: string, amount: bigint, date: string, description: string): J
   ]});
 }
 
-function harness(initial: JournalEntry[]) {
+function harness(initial: JournalEntry[], activity?: ActivityLogPort) {
   const entries = [...initial];
   const repository: LedgerRepository = {
     findJournalById: async (id) => entries.find((item) => item.id === id) ?? null,
@@ -24,7 +25,7 @@ function harness(initial: JournalEntry[]) {
     replaceJournal: async (item, expectedVersion) => { const index = entries.findIndex((candidate) => candidate.id === item.id && candidate.version === expectedVersion); if (index < 0) throw new Error("VERSION_CONFLICT"); entries[index] = item; },
   };
   const unitOfWork: LedgerUnitOfWork = { run: async <T>(work: (context: { ledger: LedgerRepository }) => Promise<T>) => work({ ledger: repository }) };
-  return { service: createDesktopLedgerService({ workspaceId, unitOfWork, now: () => "2026-08-05T00:00:00.000Z" }), entries };
+  return { service: createDesktopLedgerService({ workspaceId, unitOfWork, ...(activity === undefined ? {} : { activity }), now: () => "2026-08-05T00:00:00.000Z" }), entries };
 }
 
 describe("desktop ledger service", () => {
@@ -45,5 +46,22 @@ describe("desktop ledger service", () => {
     await harnessValue.service.delete({ id: value.id, expectedVersion: 0 });
     expect(harnessValue.entries[0]).toMatchObject({ deletedAt: "2026-08-05T00:00:00.000Z", version: 1 });
     await expect(harnessValue.service.delete({ id: value.id, expectedVersion: 0 })).rejects.toThrow("VERSION_CONFLICT");
+  });
+
+  it("records inverse data for edit, classification, merge and transfer operations", async () => {
+    const records: ActivityRecord[] = [];
+    const activity: ActivityLogPort = {
+      append: async (operation, inverse) => { records.push({ operation, inverse: inverse ?? null }); },
+      latest: async () => records[0]?.operation ?? null,
+      markUndone: async () => undefined,
+    };
+    const left = entry("018f4f7e-8ead-7c0d-0000-000000000031", -100n, "2026-08-05", "Original");
+    const right = entry("018f4f7e-8ead-7c0d-0000-000000000032", 100n, "2026-08-05", "Duplicate");
+    const value = harness([left, right], activity);
+    await value.service.update({ id: left.id, expectedVersion: 0, occurredOn: left.occurredOn, description: "Edited", postings: left.postings.map((posting) => ({ id: posting.id, accountId: posting.accountId, amountMinor: posting.amount.minor.toString() as never, currency: posting.amount.currency, role: posting.role })) });
+    await value.service.classify({ id: left.id, expectedVersion: 1, categoryAccountId: accountA });
+    await value.service.merge({ survivorId: left.id, duplicateId: right.id, survivorExpectedVersion: 2, duplicateExpectedVersion: 0 });
+    expect(records.map((record) => record.operation.kind)).toEqual(["edit", "classification", "merge"]);
+    expect(records.every((record) => record.operation.undoable && record.inverse !== null)).toBe(true);
   });
 });

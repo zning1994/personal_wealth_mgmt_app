@@ -10,10 +10,11 @@ export async function assertDesktopAcceptance(page: Page): Promise<void> {
   await expect(page.getByLabel("应用版本")).toHaveText(info.version);
   expect(await page.evaluate(() => typeof globalThis.process)).toBe("undefined");
   expect(await page.evaluate(() => Object.keys(window.wealth).sort())).toEqual([
-    "accounts", "activity", "cancelTask", "finance", "getAppInfo", "imports", "ledger", "llm", "onTaskProgress", "startTask",
+    "accounts", "activity", "cancelTask", "finance", "getAppInfo", "imports", "ledger", "llm", "onTaskProgress", "startTask", "workspace",
   ]);
   const workspaceId = await page.evaluate(() => window.wealth.imports?.getWorkspaceId());
   expect(workspaceId).toMatch(/^[0-9a-f-]{36}$/);
+  await expect.poll(() => page.evaluate(() => window.wealth.workspace.status())).toMatchObject({ state: "ready" });
   const llmSettings = await page.evaluate(() => window.wealth.llm?.getSettings());
   expect(llmSettings).toEqual({ providers: [] });
 

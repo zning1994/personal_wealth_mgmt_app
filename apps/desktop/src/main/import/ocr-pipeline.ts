@@ -21,6 +21,7 @@ export type OcrPipelineOptions = {
   readonly workerScript: string;
   readonly renderer: PdfPageRenderer;
   readonly worker?: OcrWorkerPort;
+  readonly workerEnvironment?: Readonly<Record<string, string>>;
   readonly limits?: Partial<OcrPipelineLimits>;
 };
 
@@ -108,6 +109,7 @@ export class ThreadOcrWorkerPort implements OcrWorkerPort {
     private readonly workerScript: string,
     private readonly taskDirectory: (taskId: string) => string,
     private readonly taskRoot?: string,
+    private readonly workerEnvironment?: Readonly<Record<string, string>>,
   ) {}
 
   start(request: OcrStartRequest, onEvent: (event: OcrWorkerEvent) => void): Promise<void> {
@@ -115,7 +117,7 @@ export class ThreadOcrWorkerPort implements OcrWorkerPort {
     const worker = new Worker(this.workerScript, {
       argv: [],
       execArgv: [],
-      ...(this.taskRoot ? { env: { ...process.env, WEALTH_OCR_TASK_ROOT: resolve(this.taskRoot) } } : {}),
+      env: { ...process.env, ...(this.taskRoot ? { WEALTH_OCR_TASK_ROOT: resolve(this.taskRoot) } : {}), ...(this.workerEnvironment ?? {}) },
     });
     return new Promise<void>((resolvePromise, rejectPromise) => {
       let terminal = false;
@@ -184,7 +186,7 @@ export class LocalPdfOcrPipeline implements PdfOcrPipeline {
   constructor(private readonly options: OcrPipelineOptions) {
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
     this.tempPages = new FileOcrTempPageStore(options.tempRoot);
-    this.worker = options.worker ?? new ThreadOcrWorkerPort(options.workerScript, (taskId) => this.tempPages.path(taskId), options.tempRoot);
+    this.worker = options.worker ?? new ThreadOcrWorkerPort(options.workerScript, (taskId) => this.tempPages.path(taskId), options.tempRoot, options.workerEnvironment);
   }
 
   async run(input: PdfOcrPipelineInput): Promise<OcrCompleted> {

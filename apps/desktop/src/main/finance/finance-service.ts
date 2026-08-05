@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   FinanceApi,
   FinanceBudgetProgress,
@@ -27,7 +27,8 @@ import {
   type MonthlyBudget,
 } from "@pwm/application";
 import type { Money } from "@pwm/domain";
-import { FxResolver } from "@pwm/fx";
+import { BocClient, crossViaCny, normalizeBocRate, FxResolver, type HttpTransport, type RationalRate } from "@pwm/fx";
+import type { BocRateWire } from "@pwm/fx";
 import {
   createSqlFinanceRepository,
   createSqlFxRateStore,
@@ -35,6 +36,16 @@ import {
 } from "@pwm/storage";
 
 export type DesktopFinanceService = FinanceApi;
+
+export function createDefaultFxHttpTransport(): HttpTransport | undefined {
+  if (typeof fetch !== "function") return undefined;
+  return {
+    async request(input) {
+      const response = await fetch(input.url, { headers: input.headers, signal: AbortSignal.timeout(7_000) });
+      return { status: response.status, headers: Object.fromEntries(response.headers.entries()), body: await response.text() };
+    },
+  };
+}
 
 const dateOnly = (value: string): string => value.slice(0, 10);
 const currentNow = (): string => new Date().toISOString();
@@ -80,11 +91,14 @@ export function createSqlFinanceService(input: {
   readonly workspaceId: WorkspaceId;
   readonly connection: SqlCipherConnection;
   readonly now?: () => string;
+  readonly fxHttp?: HttpTransport;
 }): DesktopFinanceService {
   const now = input.now ?? currentNow;
   const repository = createSqlFinanceRepository(input.connection);
   const fxStore = createSqlFxRateStore(input.connection, input.workspaceId);
   const fx = new FxResolver(fxStore);
+  const fxHttp = input.fxHttp ?? createDefaultFxHttpTransport();
+  const boc = fxHttp === undefined ? undefined : new BocClient(fxHttp, now);
   const valuation = new ValuationService(repository, fx);
   const balanceSheet = new BalanceSheetQuery(repository, valuation);
   const budgetProgress = new BudgetProgressQuery(repository);
@@ -102,6 +116,42 @@ export function createSqlFinanceService(input: {
     const month = query?.month ?? currentMonth(asOf);
     return { asOf, month, now: resolvedNow, offline: query?.offline ?? true };
   };
+
+  const compactDate = (value: string): string => value.replaceAll("-", "");
+  const quoteId = (currency: string, rate: BocRateWire): string => createHash("sha256").update(`${currency}:${rate.as_of_date}:${JSON.stringify(rate)}`).digest("hex");
+  const cnyIdentity = (asOf: string): RationalRate => ({ from: "CNY" as never, to: "CNY" as never, numerator: 1n, denominator: 1n, quoteIds: [], asOf });
+
+  async function fetchCnyRate(currency: string, asOf: string): Promise<{ rate: RationalRate; wire: BocRateWire; etag: string | null; rawBody: string } | null> {
+    if (!boc) return null;
+    const cached = await fxStore.findCached({ workspaceId: input.workspaceId, from: currency as never, to: "CNY" as never, onDate: asOf });
+    const result = await boc.historical(currency as never, compactDate(asOf), compactDate(asOf), "Asia/Shanghai", cached?.etag ? new Map([[`historical:${currency}:${compactDate(asOf)}:${compactDate(asOf)}:Asia/Shanghai`, cached.etag]]) : new Map());
+    if (result[0]?.kind === "not-modified" && cached) return { rate: cached.rate, wire: { code: currency, name_zh: currency, as_of_date: compactDate(asOf), spot_buy: null, cash_buy: null, spot_sell: null, cash_sell: null, conversion: Number(cached.cnyPer100 ?? "0"), published_at_utc: cached.publishedAtUtc ?? cached.fetchedAt, published_at: cached.publishedAtUtc ?? cached.fetchedAt }, etag: result[0].etag, rawBody: "" };
+    const dataResult = result.find((item) => item.kind === "data");
+    if (!dataResult || dataResult.kind !== "data") return null;
+    const body = dataResult.body as { data: readonly BocRateWire[] };
+    const wire = body.data.find((row) => row.code === currency && row.as_of_date === compactDate(asOf)) ?? body.data[0];
+    if (!wire) return null;
+    const normalized = normalizeBocRate({ quoteId: quoteId(currency, wire), rate: wire, field: "conversion", foreignMinorDigits: 2 });
+    await fxStore.putCached({ provider: "boc", field: "conversion", rate: normalized, cnyPer100: String(wire.conversion ?? "0"), publishedAtUtc: wire.published_at_utc, fetchedAt: dataResult.fetchedAt, etag: dataResult.etag, payloadHash: createHash("sha256").update(dataResult.rawBody).digest("hex") });
+    return { rate: normalized, wire, etag: dataResult.etag, rawBody: dataResult.rawBody };
+  }
+
+  async function refreshOnlineRates(asOf: string): Promise<void> {
+    if (!boc) return;
+    const settings = await repository.getSettings(input.workspaceId);
+    const balances = await repository.listAccountBalances({ workspaceId: input.workspaceId, asOf, kinds: ["asset", "liability"] });
+    const currencies = [...new Set(balances.map((balance) => String(balance.balance.currency)).filter((currency) => currency !== settings.baseCurrency))];
+    if (currencies.length === 0) return;
+    const base = settings.baseCurrency === "CNY" ? { rate: cnyIdentity(asOf), wire: null, etag: null, rawBody: "" } : await fetchCnyRate(String(settings.baseCurrency), asOf);
+    if (!base) return;
+    for (const currency of currencies) {
+      const source = currency === "CNY" ? { rate: cnyIdentity(asOf), wire: null, etag: null, rawBody: "" } : await fetchCnyRate(currency, asOf);
+      if (!source) continue;
+      const derived = settings.baseCurrency === "CNY" ? source.rate : crossViaCny(source.rate, base.rate);
+      if (derived.from !== currency || derived.to !== settings.baseCurrency) continue;
+      await fxStore.putCached({ provider: "boc", field: "conversion", rate: derived, cnyPer100: source.wire?.conversion === null || source.wire?.conversion === undefined ? "0" : String(source.wire.conversion), publishedAtUtc: source.wire?.published_at_utc ?? base.wire?.published_at_utc ?? now(), fetchedAt: now(), etag: source.etag, payloadHash: createHash("sha256").update(`${source.rawBody}:${base.rawBody}:${asOf}`).digest("hex") });
+    }
+  }
 
   const listBudgetProgress = async (month: string): Promise<readonly FinanceBudgetProgress[]> => {
     const budgets = await repository.listBudgets(input.workspaceId, month);
@@ -130,6 +180,7 @@ export function createSqlFinanceService(input: {
   return {
     async overview(query) {
       const resolved = resolveQuery(query);
+      if (!resolved.offline && (await repository.getSettings(input.workspaceId)).autoFxEnabled) await refreshOnlineRates(resolved.asOf).catch(() => undefined);
       const snapshot = await dashboard.execute({ workspaceId: input.workspaceId, ...resolved });
       return {
         asOf: snapshot.asOf,

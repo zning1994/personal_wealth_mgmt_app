@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { StrictMode } from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { AppInfo } from "@pwm/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { DesktopShellApi } from "../preload/api";
@@ -24,6 +24,14 @@ function createApi(
     startTask: vi.fn(),
     cancelTask: vi.fn(),
     onTaskProgress: vi.fn(() => vi.fn()),
+    workspace: {
+      status: vi.fn().mockResolvedValue({ state: "ready" }),
+      unlock: vi.fn(),
+      enableAppLock: vi.fn(),
+      disableAppLock: vi.fn(),
+      createBackup: vi.fn(),
+      restoreBackup: vi.fn(),
+    },
   };
 }
 
@@ -40,14 +48,10 @@ describe("App", () => {
 
     render(<App locale="zh-CN" />);
 
-    expect(screen.getByRole("main")).toBeVisible();
     expect(
-      screen.getByRole("heading", { level: 1, name: "个人财富" }),
+      await screen.findByRole("heading", { level: 1, name: "个人财富" }),
     ).toBeVisible();
     expect(screen.getByText("本地数据默认保持在此设备上")).toBeVisible();
-    expect(screen.getByRole("status", { name: "本机状态" })).toHaveTextContent(
-      "正在确认本机应用",
-    );
     expect(await screen.findByText("本机应用已安全启动")).toBeVisible();
     expect(screen.getByLabelText("应用版本")).toHaveTextContent("0.1.0");
     expect(api.getAppInfo).toHaveBeenCalledOnce();
@@ -70,7 +74,7 @@ describe("App", () => {
     render(<App locale="en" />);
 
     expect(
-      screen.getByRole("heading", { level: 1, name: "Personal Wealth" }),
+      await screen.findByRole("heading", { level: 1, name: "Personal Wealth" }),
     ).toBeVisible();
     expect(
       screen.getByText("Your data stays on this device by default"),
@@ -84,6 +88,22 @@ describe("App", () => {
     expect(
       await screen.findByText("The local app started safely"),
     ).toBeVisible();
+  });
+
+  it("keeps encrypted-backup recovery available when the workspace key is missing", async () => {
+    const api = createApi(vi.fn().mockResolvedValue({ name: "Personal Wealth", version: "0.1.0", platform: "darwin" }));
+    api.workspace.status = vi.fn().mockResolvedValue({ state: "recovery", workspaceId: crypto.randomUUID() as never });
+    api.workspace.restoreBackup = vi.fn().mockResolvedValue({ workspaceId: crypto.randomUUID(), accountCount: 1, journalCount: 2, objectCount: 0, fxQuoteCount: 0 });
+    installWealthApi(api);
+
+    render(<App locale="en" />);
+
+    expect(await screen.findByRole("heading", { name: "Recovery is required" })).toBeVisible();
+    const password = screen.getByLabelText("Backup password");
+    fireEvent.change(password, { target: { value: "recovery-pass" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Restore encrypted backup" })); });
+    expect(api.workspace.restoreBackup).toHaveBeenCalledWith({ password: "recovery-pass" });
+    expect(await screen.findByText(/restored with 2 ledger entries/u)).toBeVisible();
   });
 
   it("turns app-info failure into useful localized guidance without exposing the error", async () => {

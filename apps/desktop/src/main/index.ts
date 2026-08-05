@@ -13,7 +13,6 @@ import { TaskCoordinator } from "./task-coordinator";
 import { createUtilityPort, type ManagedUtilityPort } from "./utility-port";
 import { installWindowSecurity } from "./window-security";
 import { createMainWindow } from "./window";
-import { createLocalImportController } from "./import/in-memory-import-controller";
 import { registerImportIpc } from "./import/import-ipc";
 import { createLocalLlmSettingsService } from "./settings/llm-settings-service";
 import { registerLlmSettingsIpc } from "./settings/llm-settings-ipc";
@@ -21,9 +20,13 @@ import { registerLlmAnalysisIpc } from "./settings/llm-analysis-ipc";
 import { registerAccountsIpc } from "./accounts-ipc";
 import { LocalPdfOcrPipeline } from "./import/ocr-pipeline";
 import { LocalPdfPageRenderer } from "./import/pdf-page-renderer";
+import { resolveBundledOcrEnvironment, resolveBundledPdfRenderer, resolveBundledTessdata, resolveBundledTesseract } from "./import/ocr-tool-paths";
 import { registerLedgerIpc } from "./ledger/ledger-ipc";
 import { registerFinanceIpc } from "./finance/finance-ipc";
 import { registerActivityIpc } from "./activity/activity-ipc";
+import { LocalWorkspaceSession } from "./workspace/workspace-session";
+import { registerWorkspaceIpc } from "./workspace/workspace-ipc";
+import type { LocalImportComposition } from "./import/in-memory-import-controller";
 
 const UTILITY_READY_TIMEOUT_MS = 5_000;
 
@@ -105,6 +108,9 @@ async function start(token: object): Promise<void> {
   let port: ManagedUtilityPort | undefined;
   let coordinator: TaskCoordinator | undefined;
   let unregisterHandlers: (() => void) | undefined;
+  let unregisterCompositionHandlers: (() => void) | undefined;
+  let unregisterWorkspaceHandlers: (() => void) | undefined;
+  let workspaceSession: LocalWorkspaceSession | undefined;
   let mainWindow: BrowserWindow | undefined;
   let closeWorkspace: (() => Promise<void>) | undefined;
   let disposed = false;
@@ -149,22 +155,38 @@ async function start(token: object): Promise<void> {
     };
     const unregisterShellHandlers = registerCommandHandlers(ipcMain, handlers);
     const ocrTempRoot = typeof app.getPath === "function" ? join(app.getPath("temp"), "personal-wealth-ocr") : undefined;
+    const ocrEnvironment = resolveBundledOcrEnvironment();
+    const bundledPdfRenderer = resolveBundledPdfRenderer();
+    const bundledTesseract = resolveBundledTesseract();
+    const bundledTessdata = resolveBundledTessdata();
     const pdfOcr = ocrTempRoot === undefined ? undefined : new LocalPdfOcrPipeline({
       tempRoot: ocrTempRoot,
       workerScript: bundledWorkerPath("ocr", "index.js"),
-      renderer: new LocalPdfPageRenderer({ rootDirectory: ocrTempRoot }),
+      renderer: new LocalPdfPageRenderer({ rootDirectory: ocrTempRoot, ...(bundledPdfRenderer === undefined ? {} : { binaryPath: bundledPdfRenderer }), environment: ocrEnvironment }),
+      workerEnvironment: {
+        ...ocrEnvironment,
+        ...(bundledTesseract === undefined ? {} : { PWM_TESSERACT_PATH: bundledTesseract }),
+        ...(bundledTessdata === undefined ? {} : { TESSDATA_PREFIX: bundledTessdata }),
+      },
     });
-    const localImports = await (pdfOcr === undefined ? createLocalImportController() : createLocalImportController({ pdfOcr }));
-    closeWorkspace = localImports.close;
-    const unregisterImportHandlers = registerImportIpc(ipcMain, localImports.controller);
-    const unregisterAccountHandlers = registerAccountsIpc(ipcMain, localImports.accounts, await localImports.controller.getWorkspaceId());
-    const unregisterLedgerHandlers = registerLedgerIpc(ipcMain, localImports.ledger);
-    const unregisterFinanceHandlers = registerFinanceIpc(ipcMain, localImports.finance);
-    const unregisterActivityHandlers = registerActivityIpc(ipcMain, localImports.activity, await localImports.controller.getWorkspaceId());
-    const llmSettings = createLocalLlmSettingsService();
-    const unregisterLlmHandlers = llmSettings ? registerLlmSettingsIpc(ipcMain, llmSettings) : () => undefined;
-    const unregisterLlmAnalysisHandlers = llmSettings ? registerLlmAnalysisIpc(ipcMain, llmSettings) : () => undefined;
-    unregisterHandlers = () => { unregisterShellHandlers(); unregisterImportHandlers(); unregisterAccountHandlers(); unregisterLedgerHandlers(); unregisterFinanceHandlers(); unregisterActivityHandlers(); unregisterLlmHandlers(); unregisterLlmAnalysisHandlers(); };
+    const registerComposition = async (localImports: LocalImportComposition): Promise<void> => {
+      if (unregisterCompositionHandlers) return;
+      const workspaceId = await localImports.controller.getWorkspaceId();
+      const unregisterImportHandlers = registerImportIpc(ipcMain, localImports.controller);
+      const unregisterAccountHandlers = registerAccountsIpc(ipcMain, localImports.accounts, workspaceId);
+      const unregisterLedgerHandlers = registerLedgerIpc(ipcMain, localImports.ledger);
+      const unregisterFinanceHandlers = registerFinanceIpc(ipcMain, localImports.finance);
+      const unregisterActivityHandlers = registerActivityIpc(ipcMain, localImports.activityService);
+      const llmSettings = createLocalLlmSettingsService();
+      const unregisterLlmHandlers = llmSettings ? registerLlmSettingsIpc(ipcMain, llmSettings) : () => undefined;
+      const unregisterLlmAnalysisHandlers = llmSettings ? registerLlmAnalysisIpc(ipcMain, llmSettings) : () => undefined;
+      unregisterCompositionHandlers = () => { unregisterImportHandlers(); unregisterAccountHandlers(); unregisterLedgerHandlers(); unregisterFinanceHandlers(); unregisterActivityHandlers(); unregisterLlmHandlers(); unregisterLlmAnalysisHandlers(); unregisterCompositionHandlers = undefined; };
+    };
+    workspaceSession = new LocalWorkspaceSession(pdfOcr === undefined ? {} : { pdfOcr }, registerComposition);
+    closeWorkspace = () => workspaceSession?.close() ?? Promise.resolve();
+    await workspaceSession.initialize();
+    unregisterWorkspaceHandlers = registerWorkspaceIpc(ipcMain, workspaceSession);
+    unregisterHandlers = () => { unregisterShellHandlers(); unregisterCompositionHandlers?.(); unregisterWorkspaceHandlers?.(); };
     mainWindow = await createMainWindow({
       preloadPath: bundledPath("preload", "index.js"),
       rendererUrl: APPLICATION_ENTRY_URL,

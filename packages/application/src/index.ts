@@ -5,6 +5,7 @@ export * from "./ports/import-integration";
 export * from "./import/enrich-import-candidates";
 export * from "./import/commit-import-batch";
 export * from "./activity/activity-log";
+export * from "./activity/inverse";
 export * from "./ports/credential-vault";
 export * from "./ports/secret-vault";
 export * from "./ports/unit-of-work";

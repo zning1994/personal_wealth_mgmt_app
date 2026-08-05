@@ -18,6 +18,7 @@ export type PdfRenderCommand = (
     readonly signal: AbortSignal;
     readonly timeoutMs: number;
     readonly maxOutputBytes: number;
+    readonly env?: Readonly<Record<string, string>>;
   },
 ) => Promise<void>;
 
@@ -25,6 +26,7 @@ export type LocalPdfPageRendererOptions = {
   readonly rootDirectory: string;
   readonly binaryPath?: string;
   readonly runCommand?: PdfRenderCommand;
+  readonly environment?: Readonly<Record<string, string>>;
 };
 
 function isWithin(root: string, candidate: string): boolean {
@@ -90,6 +92,7 @@ export const runPdfRenderCommand: PdfRenderCommand = async (
       child = spawn(command, [...args], {
         cwd: options.cwd,
         shell: false,
+        env: { ...process.env, ...(options.env ?? {}) },
         stdio: ["ignore", "ignore", "pipe"],
       });
     } catch {
@@ -140,11 +143,13 @@ export class LocalPdfPageRenderer implements PdfPageRenderer {
   private readonly rootDirectory: string;
   private readonly binaryPath: string;
   private readonly runCommand: PdfRenderCommand;
+  private readonly environment: Readonly<Record<string, string>>;
 
   constructor(options: LocalPdfPageRendererOptions) {
     this.rootDirectory = resolve(options.rootDirectory);
     this.binaryPath = options.binaryPath?.trim() || process.env.PWM_PDF_RENDERER_PATH?.trim() || "pdftoppm";
     this.runCommand = options.runCommand ?? runPdfRenderCommand;
+    this.environment = options.environment ?? {};
   }
 
   async render(input: PdfPageRenderInput): Promise<readonly RenderedPdfPage[]> {
@@ -181,6 +186,7 @@ export class LocalPdfPageRenderer implements PdfPageRenderer {
           signal: input.signal,
           timeoutMs: input.limits.timeoutMs,
           maxOutputBytes: 256 * 1024,
+          env: this.environment,
         },
       );
       input.signal.throwIfAborted();
