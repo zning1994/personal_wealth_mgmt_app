@@ -123,6 +123,19 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - name: Launch packaged macOS app
         run: pnpm --filter @pwm/desktop test:packaged
+      - name: Staple notarization ticket to DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(apps/desktop/release/*.dmg)
+          if (( ${#dmgs[@]} == 0 )); then
+            echo 'No macOS DMG found to staple' >&2
+            exit 1
+          fi
+          for dmg in "${dmgs[@]}"; do
+            xcrun stapler staple "$dmg"
+          done
       - name: Verify signed app bundle
         run: bash scripts/release/verify-macos-signature.sh apps/desktop/release
       - uses: actions/upload-artifact@v4
