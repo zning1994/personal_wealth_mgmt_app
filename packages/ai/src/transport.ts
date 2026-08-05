@@ -23,6 +23,35 @@ function promptFor(request: LlmAnalysisRequest): string {
   return `${request.instruction}${schema}\n\nSource fields (already extracted locally; do not infer missing data):\n${parts}`;
 }
 
+function dataUri(mimeType: string, bytes: Uint8Array): string {
+  return `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`;
+}
+
+function hasAttachments(request: LlmAnalysisRequest): boolean {
+  return request.attachments !== undefined;
+}
+
+function assertProviderAttachments(provider: LlmProviderConfig["provider"], request: LlmAnalysisRequest): void {
+  const attachments = request.attachments;
+  if (!attachments) return;
+  if (provider === "deepseek-responses") throw new Error("LLM_ATTACHMENT_UNSUPPORTED");
+  if (provider === "anthropic" && attachments.file) throw new Error("LLM_FILE_ATTACHMENT_UNSUPPORTED");
+  if ((provider === "ollama" || provider === "openai-compatible") && attachments.file) throw new Error("LLM_FILE_ATTACHMENT_UNSUPPORTED");
+}
+
+function openAiResponsesContent(request: LlmAnalysisRequest): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [{ type: "input_text", text: promptFor(request) }];
+  for (const image of request.attachments?.images ?? []) content.push({ type: "input_image", image_url: dataUri(image.mimeType, image.bytes), detail: "auto" });
+  if (request.attachments?.file) content.push({ type: "input_file", filename: request.attachments.file.filename, file_data: dataUri(request.attachments.file.mimeType, request.attachments.file.bytes) });
+  return content;
+}
+
+function anthropicContent(request: LlmAnalysisRequest): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [{ type: "text", text: promptFor(request) }];
+  for (const image of request.attachments?.images ?? []) content.push({ type: "image", source: { type: "base64", media_type: image.mimeType, data: Buffer.from(image.bytes).toString("base64") } });
+  return content;
+}
+
 function responseText(provider: LlmProviderConfig["provider"], body: unknown): string {
   if (!body || typeof body !== "object") throw new Error("LLM_INVALID_RESPONSE");
   const value = body as Record<string, unknown>;
@@ -69,6 +98,7 @@ export function createLlmClient(configInput: LlmProviderConfig, secrets: LlmSecr
   return { analyze: async (requestInput, signal) => {
     const request = LlmAnalysisRequestSchema.parse(requestInput);
     if (!config.enabled) throw new Error("LLM_PROVIDER_DISABLED");
+    assertProviderAttachments(config.provider, request);
     const secret = config.provider === "ollama" ? null : await secrets.get(config.secretRef!);
     if (config.provider !== "ollama" && (!secret || secret.length < 8)) throw new Error("LLM_SECRET_UNAVAILABLE");
     const prompt = promptFor(request);
@@ -76,11 +106,11 @@ export function createLlmClient(configInput: LlmProviderConfig, secrets: LlmSecr
     assertSafeEndpoint(endpoint);
     let body: Record<string, unknown>;
     let headers: Record<string, string> = { "content-type": "application/json" };
-    if (config.provider === "anthropic") { headers = { ...headers, "x-api-key": secret!, "anthropic-version": "2023-06-01" }; body = { model: config.model, max_tokens: request.maxOutputTokens, system: "You analyze user-provided financial text. Never invent missing values.", messages: [{ role: "user", content: prompt }] }; }
+    if (config.provider === "anthropic") { headers = { ...headers, "x-api-key": secret!, "anthropic-version": "2023-06-01" }; body = { model: config.model, max_tokens: request.maxOutputTokens, system: "You analyze user-provided financial text. Never invent missing values.", messages: [{ role: "user", content: anthropicContent(request) }] }; }
     else if (config.provider === "deepseek-responses") { headers = { ...headers, authorization: `Bearer ${secret!}` }; body = { model: config.model, input: prompt, max_output_tokens: request.maxOutputTokens, store: false, response_format: { type: "json_object" } }; }
-    else if (config.provider === "ollama") body = { model: config.model, stream: false, format: "json", messages: [{ role: "user", content: prompt }] };
-    else if (config.provider === "openai" && endpoint.endsWith("/responses")) { headers = { ...headers, authorization: `Bearer ${secret!}` }; body = { model: config.model, input: [{ role: "system", content: [{ type: "input_text", text: "You analyze user-provided financial text. Never invent missing values. Return only JSON." }] }, { role: "user", content: [{ type: "input_text", text: prompt }] }], max_output_tokens: request.maxOutputTokens, store: false, text: { format: { type: "json_object" } } }; }
-    else { headers = { ...headers, authorization: `Bearer ${secret!}` }; body = { model: config.model, temperature: 0, max_tokens: request.maxOutputTokens, messages: [{ role: "system", content: "You analyze user-provided financial text. Never invent missing values. Return only JSON." }, { role: "user", content: prompt }], response_format: { type: "json_object" } }; }
+    else if (config.provider === "ollama") body = { model: config.model, stream: false, format: "json", messages: [{ role: "user", content: prompt }], ...(request.attachments?.images?.length ? { images: request.attachments.images.map((image) => Buffer.from(image.bytes).toString("base64")) } : {}) };
+    else if (config.provider === "openai" && endpoint.endsWith("/responses")) { headers = { ...headers, authorization: `Bearer ${secret!}` }; body = { model: config.model, input: [{ role: "system", content: [{ type: "input_text", text: "You analyze user-provided financial text. Never invent missing values. Return only JSON." }] }, { role: "user", content: openAiResponsesContent(request) }], max_output_tokens: request.maxOutputTokens, store: false, text: { format: { type: "json_object" } } }; }
+    else { headers = { ...headers, authorization: `Bearer ${secret!}` }; const content = hasAttachments(request) ? [{ type: "text", text: prompt }, ...(request.attachments?.images ?? []).map((image) => ({ type: "image_url", image_url: { url: dataUri(image.mimeType, image.bytes) } }))] : prompt; body = { model: config.model, temperature: 0, max_tokens: request.maxOutputTokens, messages: [{ role: "system", content: "You analyze user-provided financial text. Never invent missing values. Return only JSON." }, { role: "user", content }], response_format: { type: "json_object" } }; }
     const init: RequestInit = { method: "POST", headers, body: JSON.stringify(body) };
     if (signal) init.signal = signal;
     const response = await fetcher(endpoint, init);

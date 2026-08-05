@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type JSX } from "react";
 import { I18nextProvider, useTranslation } from "react-i18next";
-import type { AccountDto, ActivityOperation, AppInfo, CommitImportInput, ImportDraftView, LlmSettingsView, LlmProviderDto, TransmissionPreview, LedgerJournalView, TransferSuggestion, FinanceOverview, FinanceBudgetProgress, FinanceGoalProgress, WorkspaceStatus } from "@pwm/contracts";
+import type { AccountDto, ActivityOperation, AppInfo, CommitImportInput, ImportDraftView, LlmSettingsView, LlmProviderDto, TransmissionPreview, LedgerJournalView, TransferSuggestion, FinanceOverview, FinanceBudgetProgress, FinanceGoalProgress, WorkspaceStatus, LlmFallbackSource } from "@pwm/contracts";
 import { createI18n, type SupportedLocale } from "./i18n";
 
 export interface AppProps {
@@ -99,6 +99,8 @@ function Shell({ locale }: AppProps): JSX.Element {
   const [aiPreview, setAiPreview] = useState<TransmissionPreview | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiSuggestionCount, setAiSuggestionCount] = useState(0);
+  const [fallbackSource, setFallbackSource] = useState<LlmFallbackSource | null>(null);
+  const [fallbackPageEnd, setFallbackPageEnd] = useState(1);
   const [journals, setJournals] = useState<readonly LedgerJournalView[]>([]);
   const [transferSuggestions, setTransferSuggestions] = useState<readonly TransferSuggestion[]>([]);
   const [financeOverview, setFinanceOverview] = useState<FinanceOverview | null>(null);
@@ -257,15 +259,28 @@ function Shell({ locale }: AppProps): JSX.Element {
 
   async function previewAiImport(): Promise<void> {
     const llm = window.wealth.llm; if (!llm || !draft) return; setAiBusy(true); setNotice(null);
-    try { setAiPreview(await llm.previewImport({ provider: llmProvider, candidates: draft.candidates })); setAiSuggestionCount(0); }
+    try { setAiPreview(await llm.previewImport({ provider: llmProvider, candidates: draft.candidates, batchId: draft.batchId, ...(fallbackSource ? { fallbackToken: fallbackSource.token } : {}) })); setAiSuggestionCount(0); }
     catch { setNotice(t("llm.analysisError")); }
     finally { setAiBusy(false); }
   }
 
   async function sendAiImport(): Promise<void> {
     const llm = window.wealth.llm; if (!llm || !draft || !aiPreview) return; setAiBusy(true); setNotice(null);
-    try { const approval = await llm.approveImport(aiPreview); const result = await llm.analyzeImport({ provider: llmProvider, candidates: draft.candidates, preview: aiPreview, approval }); setAiSuggestionCount(result.suggestions.length); setNotice(t("llm.analysisComplete", { count: result.suggestions.length })); }
+    try { const approval = await llm.approveImport(aiPreview); const result = await llm.analyzeImport({ provider: llmProvider, candidates: draft.candidates, batchId: draft.batchId, ...(fallbackSource ? { fallbackToken: fallbackSource.token } : {}), preview: aiPreview, approval }); setAiSuggestionCount(result.suggestions.length); setNotice(t("llm.analysisComplete", { count: result.suggestions.length })); }
     catch { setNotice(t("llm.analysisError")); }
+    finally { setAiBusy(false); }
+  }
+
+  async function prepareAiFallback(mode: "original_pdf" | "page_images"): Promise<void> {
+    const imports = window.wealth.imports;
+    if (!imports || !draft) return;
+    setAiBusy(true); setNotice(null);
+    try {
+      const pageCount = draft.sourceDocument?.pageCount ?? 1;
+      const end = Math.min(pageCount, Math.max(1, fallbackPageEnd));
+      const source = await imports.prepareLlmFallback({ batchId: draft.batchId, mode, ...(mode === "page_images" ? { pages: Array.from({ length: end }, (_value, index) => index + 1) } : {}) });
+      setFallbackSource(source); setAiPreview(null); setAiSuggestionCount(0);
+    } catch { setNotice(t("llm.fallbackError")); }
     finally { setAiBusy(false); }
   }
 
@@ -273,7 +288,7 @@ function Shell({ locale }: AppProps): JSX.Element {
     const imports = window.wealth.imports;
     if (!imports) { setNotice(t("import.unavailable")); return; }
     setBusy(true); setNotice(null);
-    try { const source = await imports.selectSource(); if (!source) return; setDraft(await imports.createDraft({ sourceToken: source.token })); }
+    try { const source = await imports.selectSource(); if (!source) return; const nextDraft = await imports.createDraft({ sourceToken: source.token }); setDraft(nextDraft); setFallbackSource(null); setAiPreview(null); setAiSuggestionCount(0); setFallbackPageEnd(nextDraft.sourceDocument?.pageCount ?? 1); }
     catch { setNotice(t("import.error")); }
     finally { setBusy(false); }
   }
@@ -333,9 +348,9 @@ function Shell({ locale }: AppProps): JSX.Element {
           {draft.warnings.map((warning) => <p className="review-warning" key={warning}>{warning}</p>)}
           {accounts.length === 0 ? <p className="review-warning">{t("import.accountsRequired")}</p> : null}
           <div className="table-wrap"><table><thead><tr><th>{t("review.date")}</th><th>{t("review.description")}</th><th>{t("review.amount")}</th><th>{t("review.currency")}</th></tr></thead><tbody>{draft.candidates.map((candidate) => <tr key={candidate.rawRecordId}><td>{candidate.transactionDate.value}</td><td>{candidate.description.value}</td><td data-direction={candidate.direction.value}>{candidate.amountMinor.value}</td><td>{candidate.currency.value}</td></tr>)}</tbody></table></div>
-          {draft.status === "needs_ocr" ? <p className="review-warning">{t("review.ocrRequired")}</p> : <div className="ai-review">
-            {!aiPreview ? <button type="button" className="secondary-action" onClick={() => void previewAiImport()} disabled={aiBusy || !window.wealth.llm}>{aiBusy ? t("llm.analyzing") : t("llm.previewImport")}</button> : <><p className="review-warning">{t("llm.previewNotice", { count: aiPreview.textCharacters })}</p><pre className="transmission-preview">{aiPreview.redactedText}</pre><button type="button" className="secondary-action" onClick={() => void sendAiImport()} disabled={aiBusy}>{aiBusy ? t("llm.analyzing") : t("llm.sendImport")}</button>{aiSuggestionCount > 0 ? <p className="inline-notice">{t("llm.analysisComplete", { count: aiSuggestionCount })}</p> : null}</>}
-          </div>}
+          {draft.status === "needs_ocr" ? <><p className="review-warning">{t("review.ocrRequired")}</p><div className="ai-review fallback-review"><p>{t("llm.fallbackConsent")}</p><div className="row-actions"><button type="button" className="secondary-action" onClick={() => void prepareAiFallback("original_pdf")} disabled={aiBusy || !window.wealth.llm || llmProvider !== "openai"}>{t("llm.sendOriginalPdf")}</button><label className="compact-control">{t("llm.pageCount")}<input type="number" min={1} max={draft.sourceDocument?.pageCount ?? 1} value={fallbackPageEnd} onChange={(event) => setFallbackPageEnd(Number(event.target.value) || 1)} /></label><button type="button" className="secondary-action" onClick={() => void prepareAiFallback("page_images")} disabled={aiBusy || !window.wealth.llm || llmProvider === "deepseek-responses"}>{t("llm.sendPageImages")}</button></div>{fallbackSource ? <p className="inline-notice">{t("llm.fallbackReady", { count: fallbackSource.imageCount || fallbackSource.fileCount })}</p> : null}</div></> : null}{(draft.status !== "needs_ocr" || fallbackSource) ? <div className="ai-review">
+            {!aiPreview ? <button type="button" className="secondary-action" onClick={() => void previewAiImport()} disabled={aiBusy || !window.wealth.llm}>{aiBusy ? t("llm.analyzing") : t("llm.previewImport")}</button> : <><p className="review-warning">{t("llm.previewNotice", { count: aiPreview.textCharacters })}</p>{aiPreview.imageCount || aiPreview.fileCount ? <p className="review-warning">{t("llm.previewAttachmentNotice", { images: aiPreview.imageCount, files: aiPreview.fileCount })}</p> : null}<pre className="transmission-preview">{aiPreview.redactedText}</pre><button type="button" className="secondary-action" onClick={() => void sendAiImport()} disabled={aiBusy}>{aiBusy ? t("llm.analyzing") : t("llm.sendImport")}</button>{aiSuggestionCount > 0 ? <p className="inline-notice">{t("llm.analysisComplete", { count: aiSuggestionCount })}</p> : null}</>}
+          </div> : null}
           {draft.status !== "committed" ? <button type="button" className="primary-action" onClick={() => void commitDraft()} disabled={busy || draft.candidates.length === 0}>{t("review.commit")}</button> : null}
         </section> : null}
 

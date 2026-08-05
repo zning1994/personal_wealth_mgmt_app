@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { LlmProviderDtoSchema } from "./llm-settings";
 import { ImportCandidateV1Schema } from "./import/candidate";
+import { ImportBatchIdSchema } from "./ids";
 
 export const TransmissionDataTypeSchema = z.enum(["text", "image", "file"]);
 export const TransmissionDraftSchema = z.object({
@@ -33,8 +34,24 @@ export const TransmissionApprovalSchema = z.object({
 }).strict();
 export type TransmissionApproval = z.infer<typeof TransmissionApprovalSchema>;
 
-export const LlmImportPreviewInputSchema = z.object({ provider: LlmProviderDtoSchema, candidates: z.array(ImportCandidateV1Schema).min(1).max(100) }).strict();
-export const LlmImportAnalyzeInputSchema = z.object({ provider: LlmProviderDtoSchema, candidates: z.array(ImportCandidateV1Schema).min(1).max(100), preview: TransmissionPreviewSchema, approval: TransmissionApprovalSchema }).strict();
+export const LlmFallbackModeSchema = z.enum(["original_pdf", "page_images"]);
+export const LlmFallbackSourceSchema = z.object({
+  token: z.string().min(32).max(256),
+  batchId: ImportBatchIdSchema,
+  mode: LlmFallbackModeSchema,
+  pages: z.array(z.number().int().positive()).min(1).max(100),
+  pageCount: z.number().int().positive().max(100),
+  byteLength: z.number().int().positive().max(25 * 1024 * 1024),
+  imageCount: z.number().int().nonnegative().max(100),
+  fileCount: z.number().int().nonnegative().max(1),
+  mimeType: z.string().min(1).max(200),
+  displayName: z.string().min(1).max(255),
+}).strict();
+export type LlmFallbackMode = z.infer<typeof LlmFallbackModeSchema>;
+export type LlmFallbackSource = z.infer<typeof LlmFallbackSourceSchema>;
+
+export const LlmImportPreviewInputSchema = z.object({ provider: LlmProviderDtoSchema, candidates: z.array(ImportCandidateV1Schema).min(1).max(100), batchId: ImportBatchIdSchema.optional(), fallbackToken: z.string().min(32).max(256).optional() }).strict();
+export const LlmImportAnalyzeInputSchema = z.object({ provider: LlmProviderDtoSchema, candidates: z.array(ImportCandidateV1Schema).min(1).max(100), batchId: ImportBatchIdSchema.optional(), fallbackToken: z.string().min(32).max(256).optional(), preview: TransmissionPreviewSchema, approval: TransmissionApprovalSchema }).strict();
 export const LlmImportSuggestionSchema = z.object({ rawRecordId: z.string().uuid(), categoryAccountId: z.string().uuid().nullable(), confidence: z.number().min(0).max(1), explanation: z.string().max(500) }).strict();
 export const LlmImportAnalysisResultSchema = z.object({ suggestions: z.array(LlmImportSuggestionSchema) }).strict();
 export type LlmImportPreviewInput = z.infer<typeof LlmImportPreviewInputSchema>;

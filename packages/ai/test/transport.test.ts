@@ -6,6 +6,43 @@ const response = (body: unknown) => ({ status: 200, headers: new Headers(), body
 const request = { task: "categorize-import" as const, instruction: "Classify this transaction", parts: [{ field: "description", text: "Grocery" }], responseSchema: { category: "string" } };
 
 describe("LLM BYOK transport", () => {
+  it("encodes explicit page-image attachments for OpenAI Responses without storing them", async () => {
+    const fetcher = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const input = body.input as Array<{ content: Array<Record<string, unknown>> }>;
+      const content = input[1]?.content ?? [];
+      expect(body.store).toBe(false);
+      expect(content.some((item) => item.type === "input_image" && String(item.image_url).startsWith("data:image/png;base64,"))).toBe(true);
+      return response({ output_text: '{"ok":true}' });
+    });
+    await expect(createLlmClient({ provider: "openai", model: "gpt-5-mini", secretRef: "openai", enabled: true }, secretStore, fetcher).analyze({
+      ...request,
+      attachments: { images: [{ mimeType: "image/png", bytes: new TextEncoder().encode("page-image") }] },
+    })).resolves.toEqual({ ok: true });
+  });
+
+  it("sends an explicitly approved PDF only through OpenAI Responses", async () => {
+    const fetcher = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const input = body.input as Array<{ content: Array<Record<string, unknown>> }>;
+      const content = input[1]?.content ?? [];
+      expect(content.some((item) => item.type === "input_file" && String(item.file_data).startsWith("data:application/pdf;base64,"))).toBe(true);
+      return response({ output_text: '{"ok":true}' });
+    });
+    await expect(createLlmClient({ provider: "openai", model: "gpt-5-mini", secretRef: "openai", enabled: true }, secretStore, fetcher).analyze({
+      ...request,
+      attachments: { file: { filename: "statement.pdf", mimeType: "application/pdf", bytes: new TextEncoder().encode("pdf-bytes") } },
+    })).resolves.toEqual({ ok: true });
+  });
+
+  it("rejects raw attachments for DeepSeek before network access", async () => {
+    const fetcher = vi.fn(async () => response({ output_text: "{}" }));
+    await expect(createLlmClient({ provider: "deepseek-responses", model: "deepseek-v4-flash", secretRef: "deepseek", enabled: true }, secretStore, fetcher).analyze({
+      ...request,
+      attachments: { images: [{ mimeType: "image/png", bytes: new Uint8Array([1, 2, 3]) }] },
+    })).rejects.toThrow("LLM_ATTACHMENT_UNSUPPORTED");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("sends only extracted text to the OpenAI-compatible endpoint", async () => {
     const fetcher = vi.fn(async (_input: string | URL, init?: RequestInit) => { expect(String(init?.body)).toContain("Grocery"); expect(String(init?.body)).not.toContain("pdf-bytes"); return response({ choices: [{ message: { content: '{"category":"food"}' } }] }); });
     await expect(createLlmClient({ provider: "openai-compatible", model: "local-model", secretRef: "openai-key", enabled: true, endpoint: "http://localhost/v1/chat/completions" }, secretStore, fetcher).analyze(request)).resolves.toEqual({ category: "food" });

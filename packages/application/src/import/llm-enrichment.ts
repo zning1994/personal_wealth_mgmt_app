@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ImportCandidateV1 } from "@pwm/contracts";
 import type { LlmClient } from "@pwm/ai";
@@ -12,17 +13,30 @@ const AnalysisSchema = z.object({
 
 export type LlmCandidateSuggestion = z.infer<typeof AnalysisSchema> & { rawRecordId: string };
 
-export function buildImportTransmissionDraft(input: { providerId: string; providerName: string; baseUrl: string; model: string; candidates: readonly ImportCandidateV1[] }): TransmissionDraft {
-  return { providerId: input.providerId, providerName: input.providerName, baseUrl: input.baseUrl, model: input.model, dataTypes: ["text"], text: input.candidates.map((candidate) => `${candidate.rawRecordId} | ${candidate.transactionDate.value} | ${candidate.description.value} | ${candidate.amountMinor.value} ${candidate.currency.value}`).join("\n"), imageSha256: [] };
+export type ImportLlmAttachments = {
+  readonly images?: readonly { readonly mimeType: "image/png" | "image/jpeg" | "image/webp"; readonly bytes: Uint8Array }[];
+  readonly file?: { readonly filename: string; readonly mimeType: "application/pdf"; readonly bytes: Uint8Array };
+};
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+export function buildImportTransmissionDraft(input: { providerId: string; providerName: string; baseUrl: string; model: string; candidates: readonly ImportCandidateV1[]; attachments?: ImportLlmAttachments }): TransmissionDraft {
+  const images = input.attachments?.images ?? [];
+  const file = input.attachments?.file;
+  return { providerId: input.providerId, providerName: input.providerName, baseUrl: input.baseUrl, model: input.model, dataTypes: ["text", ...(images.length > 0 ? ["image" as const] : []), ...(file ? ["file" as const] : [])], text: input.candidates.map((candidate) => `${candidate.rawRecordId} | ${candidate.transactionDate.value} | ${candidate.description.value} | ${candidate.amountMinor.value} ${candidate.currency.value}`).join("\n"), imageSha256: images.map((image) => sha256(image.bytes)), ...(file ? { fileSha256: sha256(file.bytes) } : {}) };
 }
 
 export function previewImportTransmission(input: Parameters<typeof buildImportTransmissionDraft>[0]): TransmissionPreview {
   return buildTransmissionPreview(buildImportTransmissionDraft(input));
 }
 
-export async function suggestCandidateCategoriesWithConsent(client: LlmClient, candidates: readonly ImportCandidateV1[], preview: TransmissionPreview, approval: TransmissionApproval, signal?: AbortSignal): Promise<readonly LlmCandidateSuggestion[]> {
+export async function suggestCandidateCategoriesWithConsent(client: LlmClient, candidates: readonly ImportCandidateV1[], preview: TransmissionPreview, approval: TransmissionApproval, signal?: AbortSignal, attachments?: ImportLlmAttachments): Promise<readonly LlmCandidateSuggestion[]> {
   assertRemoteTransmissionApproved(preview, approval);
-  const response = await client.analyze({ task: "categorize-import", instruction: "For each rawRecordId, suggest a category account only when the description is sufficient. Use null when uncertain. Never invent IDs.", parts: [{ field: "transactions", text: preview.redactedText }], responseSchema: { suggestions: [{ rawRecordId: "uuid", categoryAccountId: "uuid|null", confidence: "number", explanation: "string" }] }, maxOutputTokens: Math.min(16_384, Math.max(500, candidates.length * 120)) }, signal);
+  const expectedPreview = buildTransmissionPreview(buildImportTransmissionDraft({ providerId: preview.draft.providerId, providerName: preview.draft.providerName, baseUrl: preview.draft.baseUrl, model: preview.draft.model, candidates, ...(attachments ? { attachments } : {}) }));
+  if (expectedPreview.payloadSha256 !== preview.payloadSha256) throw new Error("TRANSMISSION_PREVIEW_STALE");
+  const response = await client.analyze({ task: "categorize-import", instruction: "For each rawRecordId, suggest a category account only when the description is sufficient. Use null when uncertain. Never invent IDs.", parts: [{ field: "transactions", text: preview.redactedText }], ...(attachments ? { attachments: { ...(attachments.images ? { images: [...attachments.images] } : {}), ...(attachments.file ? { file: { ...attachments.file } } : {}) } } : {}), responseSchema: { suggestions: [{ rawRecordId: "uuid", categoryAccountId: "uuid|null", confidence: "number", explanation: "string" }] }, maxOutputTokens: Math.min(16_384, Math.max(500, candidates.length * 120)) }, signal);
   const parsed = z.object({ suggestions: z.array(AnalysisSchema.extend({ rawRecordId: z.string().uuid() })).max(candidates.length) }).strict().parse(response);
   const known = new Set(candidates.map((candidate) => String(candidate.rawRecordId)));
   if (parsed.suggestions.some((suggestion) => !known.has(suggestion.rawRecordId))) throw new Error("LLM_UNKNOWN_RAW_RECORD");

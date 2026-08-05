@@ -159,10 +159,11 @@ async function start(token: object): Promise<void> {
     const bundledPdfRenderer = resolveBundledPdfRenderer();
     const bundledTesseract = resolveBundledTesseract();
     const bundledTessdata = resolveBundledTessdata();
-    const pdfOcr = ocrTempRoot === undefined ? undefined : new LocalPdfOcrPipeline({
+    const pdfRenderer = ocrTempRoot === undefined ? undefined : new LocalPdfPageRenderer({ rootDirectory: ocrTempRoot, ...(bundledPdfRenderer === undefined ? {} : { binaryPath: bundledPdfRenderer }), environment: ocrEnvironment });
+    const pdfOcr = ocrTempRoot === undefined || pdfRenderer === undefined ? undefined : new LocalPdfOcrPipeline({
       tempRoot: ocrTempRoot,
       workerScript: bundledWorkerPath("ocr", "index.js"),
-      renderer: new LocalPdfPageRenderer({ rootDirectory: ocrTempRoot, ...(bundledPdfRenderer === undefined ? {} : { binaryPath: bundledPdfRenderer }), environment: ocrEnvironment }),
+      renderer: pdfRenderer,
       workerEnvironment: {
         ...ocrEnvironment,
         ...(bundledTesseract === undefined ? {} : { PWM_TESSERACT_PATH: bundledTesseract }),
@@ -179,10 +180,10 @@ async function start(token: object): Promise<void> {
       const unregisterActivityHandlers = registerActivityIpc(ipcMain, localImports.activityService);
       const llmSettings = createLocalLlmSettingsService();
       const unregisterLlmHandlers = llmSettings ? registerLlmSettingsIpc(ipcMain, llmSettings) : () => undefined;
-      const unregisterLlmAnalysisHandlers = llmSettings ? registerLlmAnalysisIpc(ipcMain, llmSettings) : () => undefined;
+      const unregisterLlmAnalysisHandlers = llmSettings ? registerLlmAnalysisIpc(ipcMain, llmSettings, localImports.llmFallback) : () => undefined;
       unregisterCompositionHandlers = () => { unregisterImportHandlers(); unregisterAccountHandlers(); unregisterLedgerHandlers(); unregisterFinanceHandlers(); unregisterActivityHandlers(); unregisterLlmHandlers(); unregisterLlmAnalysisHandlers(); unregisterCompositionHandlers = undefined; };
     };
-    workspaceSession = new LocalWorkspaceSession(pdfOcr === undefined ? {} : { pdfOcr }, registerComposition);
+    workspaceSession = new LocalWorkspaceSession({ ...(pdfOcr === undefined ? {} : { pdfOcr }), ...(pdfRenderer === undefined ? {} : { pdfRenderer }), ...(ocrTempRoot === undefined ? {} : { pdfRenderRoot: ocrTempRoot }) }, registerComposition);
     closeWorkspace = () => workspaceSession?.close() ?? Promise.resolve();
     await workspaceSession.initialize();
     unregisterWorkspaceHandlers = registerWorkspaceIpc(ipcMain, workspaceSession);

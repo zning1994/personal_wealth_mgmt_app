@@ -14,6 +14,9 @@ import {
   type ImportBatchId,
   type UpdateCandidateInput,
   type SkipCandidateInput,
+  PrepareLlmFallbackInputSchema,
+  LlmFallbackSourceSchema,
+  type PrepareLlmFallbackInput,
   type CommitImportInput,
   SelectedSourceSchema,
   ImportDraftViewSchema,
@@ -116,6 +119,7 @@ export function createDesktopApi(
     skipCandidate: async (input: SkipCandidateInput) => ImportDraftViewSchema.parse(await ipc.invoke("imports:skip-candidate", input)),
     cancel: async (batchId: ImportBatchId) => { await ipc.invoke("imports:cancel", batchId); },
     commit: async (input: CommitImportInput) => CommittedBatchViewSchema.parse(await ipc.invoke("imports:commit", input)),
+    prepareLlmFallback: async (input: PrepareLlmFallbackInput) => LlmFallbackSourceSchema.parse(await ipc.invoke("imports:prepare-llm-fallback", PrepareLlmFallbackInputSchema.parse(input))),
   };
   const llm: LlmSettingsApi = {
     getSettings: async () => LlmSettingsViewSchema.parse(await ipc.invoke("llm:get-settings", undefined)),

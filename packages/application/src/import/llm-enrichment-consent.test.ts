@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { approveTransmission } from "@pwm/ai";
 import type { ImportCandidateV1 } from "@pwm/contracts";
+import type { LlmClient } from "@pwm/ai";
 import { previewImportTransmission, suggestCandidateCategoriesWithConsent } from "./llm-enrichment";
 
 const candidate = { schemaVersion: 1 as const, rawRecordId: "018f4f7e-8ead-7c0d-8000-000000000001", transactionDate: { value: "2026-08-05", confidence: 1, provenance: { source: "row" as const, locator: "row:2", producerId: "synthetic", producerVersion: "1" } }, description: { value: "Synthetic Market", confidence: 1, provenance: { source: "row" as const, locator: "row:2", producerId: "synthetic", producerVersion: "1" } }, amountMinor: { value: "-100", confidence: 1, provenance: { source: "row" as const, locator: "row:2", producerId: "synthetic", producerVersion: "1" } }, currency: { value: "AED", confidence: 1, provenance: { source: "row" as const, locator: "row:2", producerId: "synthetic", producerVersion: "1" } }, direction: { value: "debit" as const, confidence: 1, provenance: { source: "row" as const, locator: "row:2", producerId: "synthetic", producerVersion: "1" } } } as unknown as ImportCandidateV1;
@@ -11,5 +12,16 @@ describe("import AI consent", () => {
     const approval = approveTransmission(preview, "2026-08-05T00:00:00.000Z");
     const client = { analyze: async () => ({ suggestions: [{ rawRecordId: candidate.rawRecordId, categoryAccountId: null, confidence: 0.2, explanation: "uncertain" }] }) };
     await expect(suggestCandidateCategoriesWithConsent(client, [candidate], preview, approval)).resolves.toHaveLength(1);
+  });
+
+  it("binds page-image hashes to the exact approved payload and forwards bytes only after approval", async () => {
+    const image = new TextEncoder().encode("page-image");
+    const preview = previewImportTransmission({ providerId: "openai", providerName: "OpenAI", baseUrl: "https://api.openai.com/v1/responses", model: "gpt-5-mini", candidates: [candidate], attachments: { images: [{ mimeType: "image/png", bytes: image }] } });
+    const approval = approveTransmission(preview, "2026-08-05T00:00:00.000Z");
+    const analyze: LlmClient["analyze"] = async (request) => {
+      expect(request.attachments?.images?.[0]?.bytes).toEqual(image);
+      return { suggestions: [{ rawRecordId: candidate.rawRecordId, categoryAccountId: null, confidence: 0.2, explanation: "uncertain" }] };
+    };
+    await expect(suggestCandidateCategoriesWithConsent({ analyze }, [candidate], preview, approval, undefined, { images: [{ mimeType: "image/png", bytes: image }] })).resolves.toHaveLength(1);
   });
 });
