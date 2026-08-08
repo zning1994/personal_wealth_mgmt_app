@@ -49,7 +49,7 @@ describe("IPC schemas", () => {
     expect(() =>
       parseCommandOutput("app:get-info", {
         name: "Personal Wealth",
-        version: "0.1.0",
+        version: "0.1.1",
         platform: "darwin",
         unexpected: true,
       }),

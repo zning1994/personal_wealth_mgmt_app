@@ -40,7 +40,7 @@ describe("App", () => {
     const api = createApi(
       vi.fn().mockResolvedValue({
         name: "Personal Wealth",
-        version: "0.1.0",
+        version: "0.1.1",
         platform: "darwin",
       }),
     );
@@ -53,7 +53,7 @@ describe("App", () => {
     ).toBeVisible();
     expect(screen.getByText("本地数据默认保持在此设备上")).toBeVisible();
     expect(await screen.findByText("本机应用已安全启动")).toBeVisible();
-    expect(screen.getByLabelText("应用版本")).toHaveTextContent("0.1.0");
+    expect(screen.getByLabelText("应用版本")).toHaveTextContent("0.1.1");
     expect(api.getAppInfo).toHaveBeenCalledOnce();
     expect(api.startTask).not.toHaveBeenCalled();
     expect(api.cancelTask).not.toHaveBeenCalled();
@@ -65,7 +65,7 @@ describe("App", () => {
       createApi(
         vi.fn().mockResolvedValue({
           name: "Personal Wealth",
-          version: "0.1.0",
+          version: "0.1.1",
           platform: "win32",
         }),
       ),
@@ -91,7 +91,7 @@ describe("App", () => {
   });
 
   it("keeps encrypted-backup recovery available when the workspace key is missing", async () => {
-    const api = createApi(vi.fn().mockResolvedValue({ name: "Personal Wealth", version: "0.1.0", platform: "darwin" }));
+    const api = createApi(vi.fn().mockResolvedValue({ name: "Personal Wealth", version: "0.1.1", platform: "darwin" }));
     api.workspace.status = vi.fn().mockResolvedValue({ state: "recovery", workspaceId: crypto.randomUUID() as never });
     api.workspace.restoreBackup = vi.fn().mockResolvedValue({ workspaceId: crypto.randomUUID(), accountCount: 1, journalCount: 2, objectCount: 0, fxQuoteCount: 0 });
     installWealthApi(api);
@@ -137,7 +137,7 @@ describe("App", () => {
     await act(async () => {
       resolveInfo?.({
         name: "Personal Wealth",
-        version: "0.1.0",
+        version: "0.1.1",
         platform: "darwin",
       });
       await pending;
@@ -155,7 +155,7 @@ describe("App", () => {
     const api = createApi(
       vi.fn().mockResolvedValue({
         name: "Personal Wealth",
-        version: "0.1.0",
+        version: "0.1.1",
         platform: "darwin",
       }),
     );
@@ -189,7 +189,7 @@ describe("App", () => {
     const api = createApi(
       vi.fn().mockResolvedValue({
         name: "Personal Wealth",
-        version: "0.1.0",
+        version: "0.1.1",
         platform: "win32",
       }),
     );

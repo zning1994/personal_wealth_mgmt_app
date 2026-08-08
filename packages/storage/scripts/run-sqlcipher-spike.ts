@@ -171,7 +171,7 @@ async function prepareElectronNativeApp(root: string): Promise<string | undefine
     path.join(appRoot, "package.json"),
     `${JSON.stringify({
       name: "pwm-sqlcipher-electron-native",
-      version: "0.1.0",
+      version: "0.1.1",
       private: true,
       main: "main.cjs",
       dependencies: {},

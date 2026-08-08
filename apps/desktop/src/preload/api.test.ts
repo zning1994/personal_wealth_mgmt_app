@@ -5,12 +5,12 @@ describe("createDesktopApi", () => {
   it("exposes only the frozen allowlisted API and validates app info output", async () => {
     const invoke = vi
       .fn()
-      .mockResolvedValue({ name: "Personal Wealth", version: "0.1.0", platform: "darwin" });
+      .mockResolvedValue({ name: "Personal Wealth", version: "0.1.1", platform: "darwin" });
     const api = createDesktopApi({ invoke, on: vi.fn(), removeListener: vi.fn() } as never);
 
     await expect(api.getAppInfo()).resolves.toEqual({
       name: "Personal Wealth",
-      version: "0.1.0",
+      version: "0.1.1",
       platform: "darwin",
     });
     expect(invoke).toHaveBeenCalledWith("app:get-info", {});
