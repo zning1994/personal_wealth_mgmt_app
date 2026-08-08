@@ -252,6 +252,9 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          # electron-builder leaves unpacked app directories beside the
+          # distributable files. Keep only files in the public release set.
+          find release-assets -mindepth 1 -type d -prune -exec rm -rf -- {} +
           for file in release-assets/*\ *; do
             normalized="${file// /-}"
             if [[ "$file" != "$normalized" ]]; then
@@ -261,7 +264,9 @@ jobs:
           rm -f release-assets/SHA256SUMS.txt
           (
             cd release-assets
-            sha256sum -- * | LC_ALL=C sort > SHA256SUMS.txt
+            find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum -- > SHA256SUMS.txt
           )
       - uses: softprops/action-gh-release@v2
         with:
