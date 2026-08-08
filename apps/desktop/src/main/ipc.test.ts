@@ -8,7 +8,7 @@ describe("registerCommandHandlers", () => {
     const handle = vi.fn((name: string, fn: (...args: unknown[]) => unknown) => registered.set(name, fn));
     const start = vi.fn();
     registerCommandHandlers({ handle, removeHandler: vi.fn() } as never, {
-      "app:get-info": () => ({ name: "Personal Wealth", version: "0.1.0", platform: "darwin" }),
+      "app:get-info": () => ({ name: "Personal Wealth", version: "0.1.1", platform: "darwin" }),
       "task:start": start,
       "task:cancel": () => ({ cancelled: false }),
     });
@@ -21,7 +21,7 @@ describe("registerCommandHandlers", () => {
     const handle = vi.fn();
     const removeHandler = vi.fn();
     const dispose = registerCommandHandlers({ handle, removeHandler } as never, {
-      "app:get-info": () => ({ name: "Personal Wealth", version: "0.1.0", platform: "darwin" }),
+      "app:get-info": () => ({ name: "Personal Wealth", version: "0.1.1", platform: "darwin" }),
       "task:start": () => ({ taskId: "018f4f7e-8ead-7c0d-8000-000000000101" as never }),
       "task:cancel": () => ({ cancelled: false }),
     });
@@ -49,7 +49,7 @@ describe("registerCommandHandlers", () => {
       if (channel === "task:start") throw new Error("registration failed");
     });
     const handlers = {
-      "app:get-info": () => ({ name: "Personal Wealth" as const, version: "0.1.0", platform: "darwin" as const }),
+      "app:get-info": () => ({ name: "Personal Wealth" as const, version: "0.1.1", platform: "darwin" as const }),
       "task:start": () => ({ taskId: "018f4f7e-8ead-7c0d-8000-000000000103" as never }),
       "task:cancel": () => ({ cancelled: false }),
     };

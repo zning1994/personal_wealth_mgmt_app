@@ -111,7 +111,7 @@ describe("startDesktop", () => {
     vi.clearAllMocks();
     coordinators.splice(0);
     app.getAppPath.mockReturnValue("/app");
-    app.getVersion.mockReturnValue("0.1.0");
+    app.getVersion.mockReturnValue("0.1.1");
     app.whenReady.mockResolvedValue(undefined);
     app.once.mockImplementation(() => undefined);
     utilityProcess.fork.mockImplementation(() => childDouble());

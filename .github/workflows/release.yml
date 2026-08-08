@@ -228,7 +228,7 @@ jobs:
         run: pnpm --filter @pwm/desktop test:packaged
       - name: Write unsigned disclosure
         shell: pwsh
-        run: Set-Content -Path apps/desktop/release/WINDOWS-UNSIGNED.txt -Value 'Personal Wealth v0.1.0 Windows package is unsigned. Verify the downloaded checksum and install only if you trust the source.'
+        run: Set-Content -Path apps/desktop/release/WINDOWS-UNSIGNED.txt -Value 'Personal Wealth v0.1.1 Windows package is unsigned. Verify the downloaded checksum and install only if you trust the source.'
       - uses: actions/upload-artifact@v4
         with:
           name: personal-wealth-windows-x64-unsigned
@@ -245,7 +245,24 @@ jobs:
           pattern: personal-wealth-*
           path: release-assets
           merge-multiple: true
-      - run: sha256sum release-assets/* | tee release-assets/SHA256SUMS.txt
+      - name: Remove build diagnostics from public release assets
+        run: rm -f release-assets/builder-debug.yml
+      - name: Normalize release asset names and write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for file in release-assets/*\ *; do
+            normalized="${file// /-}"
+            if [[ "$file" != "$normalized" ]]; then
+              mv -- "$file" "$normalized"
+            fi
+          done
+          rm -f release-assets/SHA256SUMS.txt
+          (
+            cd release-assets
+            sha256sum -- * | LC_ALL=C sort > SHA256SUMS.txt
+          )
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
